@@ -281,6 +281,12 @@
                                                 <template v-else-if="targetPlayer === 'browserPro'">
                                                     <img src="../assets/edge-logo.png" class="platform-icon">
                                                     {{ t('browserPro') }}</template>
+                                                <template v-else-if="targetPlayer === 'ytmdesktop'">
+                                                    <svg viewBox="0 0 24 24" class="platform-icon" fill="#ef4444">
+                                                        <circle cx="12" cy="12" r="10" />
+                                                        <polygon points="10 8 16 12 10 16 10 8" fill="#ffffff" />
+                                                    </svg>
+                                                    YouTube Music</template>
                                                 <template v-else-if="targetPlayer === 'other'">
                                                     <svg viewBox="0 0 24 24" class="platform-icon" fill="currentColor">
                                                         <path
@@ -342,6 +348,15 @@
                                                     @click="handleSelectPlayer('browserPro')">
                                                     <img src="../assets/edge-logo.png" class="platform-icon">
                                                     {{ t('browserPro') }}
+                                                </div>
+                                                <div class="dropdown-item"
+                                                    :class="{ 'is-active': targetPlayer === 'ytmdesktop' }"
+                                                    @click="handleSelectPlayer('ytmdesktop')">
+                                                    <svg viewBox="0 0 24 24" class="platform-icon" fill="#ef4444">
+                                                        <circle cx="12" cy="12" r="10" />
+                                                        <polygon points="10 8 16 12 10 16 10 8" fill="#ffffff" />
+                                                    </svg>
+                                                    YouTube Music
                                                 </div>
                                                 <div class="dropdown-item"
                                                     :class="{ 'is-active': targetPlayer === 'other' }"
@@ -523,8 +538,8 @@
                                     <div class="set-item-meta">
                                         <span class="set-item-title">
                                             Codex Quota
-                                            <span class="quota-badge" :class="quotaCodexConnected ? 'connected' : 'disconnected'">
-                                                {{ quotaCodexConnected ? 'ON' : 'OFF' }}
+                                            <span class="quota-badge" :class="quotaCodexConnected ? (isCodexActive ? 'connected active-working' : 'connected') : 'disconnected'">
+                                                {{ quotaCodexConnected ? (isCodexActive ? '✦ WORKING' : 'ON') : 'OFF' }}
                                             </span>
                                         </span>
                                         <span class="set-item-desc" :title="quotaCodexSummary || 'Chưa kết nối'">{{ quotaCodexSummary || 'Chưa kết nối' }}</span>
@@ -554,12 +569,12 @@
                                 <div class="set-item" :class="{ 'is-dropdown-open': isQuotaModeDropdownOpen, 'disabled-set-item': !enableAiQuota }">
                                     <div class="set-item-meta">
                                         <span class="set-item-title">{{ t('quotaDisplayMode') }}</span>
-                                        <span class="set-item-desc">{{ quotaDisplayMode === 'auto' ? 'Auto (IDE)' : 'Always' }}</span>
+                                        <span class="set-item-desc">{{ quotaDisplayMode === 'open' ? 'When Open (Tab)' : (quotaDisplayMode === 'auto' ? 'Focus (IDE)' : 'Always On') }}</span>
                                     </div>
                                     <div class="custom-dropdown" tabindex="0" @blur="isQuotaModeDropdownOpen = false">
-                                        <div class="dropdown-trigger" style="width: 100px;" @click="enableAiQuota && (isQuotaModeDropdownOpen = !isQuotaModeDropdownOpen)">
+                                        <div class="dropdown-trigger" style="width: 110px;" @click="enableAiQuota && (isQuotaModeDropdownOpen = !isQuotaModeDropdownOpen)">
                                             <div class="current-item">
-                                                {{ quotaDisplayMode === 'auto' ? 'Auto' : 'Always' }}
+                                                {{ quotaDisplayMode === 'open' ? 'When Open' : (quotaDisplayMode === 'auto' ? 'Focus' : 'Always') }}
                                             </div>
                                             <svg viewBox="0 0 24 24" class="arrow-icon" :class="{ 'is-open': isQuotaModeDropdownOpen }">
                                                 <path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
@@ -567,8 +582,11 @@
                                         </div>
                                         <transition name="dropdown-up">
                                             <div class="dropdown-menu dropdown-menu-up" v-show="isQuotaModeDropdownOpen">
+                                                <div class="dropdown-item" :class="{ 'is-active': quotaDisplayMode === 'open' }" @click="selectQuotaMode('open')">
+                                                    When Open (Tab)
+                                                </div>
                                                 <div class="dropdown-item" :class="{ 'is-active': quotaDisplayMode === 'auto' }" @click="selectQuotaMode('auto')">
-                                                    Auto (IDE)
+                                                    Focus (IDE)
                                                 </div>
                                                 <div class="dropdown-item" :class="{ 'is-active': quotaDisplayMode === 'always' }" @click="selectQuotaMode('always')">
                                                     Always On
@@ -718,8 +736,11 @@ interface QuotaWindow {
     reset_timestamp?: number;
 }
 interface ProviderQuota {
-    provider: string;
+    provider: string; // "codex" | "antigravity"
     connected: boolean;
+    is_fallback?: boolean;
+    retry_in_sec?: number;
+    is_active?: boolean;
     error_message?: string;
     account_email?: string;
     plan_type?: string;
@@ -747,7 +768,7 @@ interface AiQuotaSettings {
 const enableAiQuota = ref(localStorage.getItem('nsd_ai_quota_enabled') !== 'false');
 const enableCodexQuota = ref(localStorage.getItem('nsd_ai_quota_codex') !== 'false');
 const enableAntigravityQuota = ref(localStorage.getItem('nsd_ai_quota_antigravity') !== 'false');
-const quotaDisplayMode = ref<'auto' | 'always'>((localStorage.getItem('nsd_ai_quota_mode') as 'auto' | 'always') || 'auto');
+const quotaDisplayMode = ref<'auto' | 'open' | 'always'>((localStorage.getItem('nsd_ai_quota_mode') as 'auto' | 'open' | 'always') || 'open');
 const quotaRefreshInterval = ref<number>(Number(localStorage.getItem('nsd_ai_quota_interval') || '60'));
 
 const isQuotaModeDropdownOpen = ref(false);
@@ -758,6 +779,7 @@ const lastQuotaRefreshTime = ref('');
 const quotaData = ref<AiQuotaPayload | null>(null);
 
 const quotaCodexConnected = computed(() => !!quotaData.value?.codex?.connected);
+const isCodexActive = computed(() => !!quotaData.value?.codex?.is_active);
 const quotaAntigravityConnected = computed(() => !!quotaData.value?.antigravity?.connected);
 
 const quotaCodexSummary = computed(() => {
@@ -774,10 +796,11 @@ const quotaAntigravitySummary = computed(() => {
     if (!q) return '';
     if (!q.connected) return 'Chưa kết nối';
     const gemini = q.five_hour?.percent_remaining != null ? `Gemini: ${Math.round(q.five_hour.percent_remaining)}%` : '';
-    return gemini || 'Đã kết nối';
+    const claude = q.secondary_quota?.percent_remaining != null ? `Claude: ${Math.round(q.secondary_quota.percent_remaining)}%` : '';
+    return [gemini, claude].filter(Boolean).join(' | ') || 'Đã kết nối';
 });
 
-const selectQuotaMode = (mode: 'auto' | 'always') => {
+const selectQuotaMode = (mode: 'auto' | 'open' | 'always') => {
     quotaDisplayMode.value = mode;
     isQuotaModeDropdownOpen.value = false;
     handleAiQuotaSettingChange();
@@ -3238,6 +3261,24 @@ input:disabled+.slider {
     background: rgba(34, 197, 94, 0.15);
     color: #22c55e;
     border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.quota-badge.active-working {
+    background: rgba(16, 185, 129, 0.25);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.5);
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+    animation: quota-working-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes quota-working-pulse {
+    0%, 100% {
+        opacity: 0.85;
+    }
+    50% {
+        opacity: 1;
+        box-shadow: 0 0 12px rgba(16, 185, 129, 0.7);
+    }
 }
 
 .quota-badge.disconnected {

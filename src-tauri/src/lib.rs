@@ -1,6 +1,7 @@
 mod activity_pool;
 mod ai_quota;
 mod audio_spectrum;
+mod codex_detector;
 mod music_controller;
 mod notification;
 mod system_events;
@@ -668,12 +669,11 @@ async fn get_active_browser_tabs() -> Result<Vec<String>, String> {
     .map_err(|e| format!("获取浏览器标签页任务失败: {}", e))?
 }
 
-// 非 Windows 平台空实现，避免编译报错
-#[cfg(not(target_os = "windows"))]
 #[tauri::command]
-fn get_active_browser_tabs() -> Result<Vec<String>, String> {
-    Ok(Vec::new())
+fn get_codex_activity() -> codex_detector::CodexActivityPayload {
+    codex_detector::get_current_activity()
 }
+
 
 // 缓存 AppHandle 供剪贴板监听线程的窗口过程使用
 #[cfg(target_os = "windows")]
@@ -819,8 +819,12 @@ pub fn run() {
             ai_quota::refresh_ai_quota,
             ai_quota::get_ai_quota_settings,
             ai_quota::save_ai_quota_settings,
+            get_codex_activity,
         ])
         .setup(|app| {
+            // Codex 语义活动状态实时检测器 (JSONL Tailer)
+            codex_detector::start_codex_detector(app.handle().clone());
+
             // AI Quota 监控（Codex & Antigravity）
             ai_quota::start_ai_quota_monitor(app.handle().clone());
 

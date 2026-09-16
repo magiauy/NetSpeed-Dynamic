@@ -2477,6 +2477,7 @@ name = "netspeed-dynamic"
 version = "1.0.0"
 dependencies = [
  "axum",
+ "chrono",
  "cpal",
  "futures-util",
  "lazy_static",

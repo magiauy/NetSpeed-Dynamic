@@ -16,6 +16,12 @@ pub struct QuotaWindow {
 pub struct ProviderQuota {
     pub provider: String, // "codex" | "antigravity"
     pub connected: bool,
+    #[serde(default)]
+    pub is_fallback: Option<bool>,
+    #[serde(default)]
+    pub retry_in_sec: Option<u64>,
+    #[serde(default)]
+    pub is_active: Option<bool>,
     pub error_message: Option<String>,
     pub account_email: Option<String>,
     pub plan_type: Option<String>,
@@ -31,6 +37,7 @@ pub struct AiQuotaPayload {
     pub codex: Option<ProviderQuota>,
     pub antigravity: Option<ProviderQuota>,
     pub active_window_is_ide: bool,
+    pub ide_is_open: bool,
     pub active_app_name: Option<String>,
     pub timestamp: i64,
 }
@@ -56,9 +63,101 @@ impl Default for AiQuotaSettings {
     }
 }
 
+#[derive(Debug, Clone)]
+struct CodexStateTracker {
+    last_valid_quota: Option<ProviderQuota>,
+    consecutive_errors: u32,
+    next_retry_time: Option<Instant>,
+    last_backoff_secs: u64,
+}
+
+impl Default for CodexStateTracker {
+    fn default() -> Self {
+        Self {
+            last_valid_quota: None,
+            consecutive_errors: 0,
+            next_retry_time: None,
+            last_backoff_secs: 0,
+        }
+    }
+}
+
 lazy_static::lazy_static! {
     static ref GLOBAL_AI_SETTINGS: Mutex<AiQuotaSettings> = Mutex::new(AiQuotaSettings::default());
     static ref LATEST_PAYLOAD: Mutex<Option<AiQuotaPayload>> = Mutex::new(None);
+    static ref CODEX_TRACKER: Mutex<CodexStateTracker> = Mutex::new(CodexStateTracker::default());
+}
+
+/// Tính thời gian retry lũy tiến (5s -> 10s -> 20s -> 40s -> 80s -> tối đa 120s)
+fn calculate_backoff_secs(consecutive_errors: u32) -> u64 {
+    let base = 5u64;
+    let shift = consecutive_errors.saturating_sub(1).min(5);
+    (base * (1u64 << shift)).min(120)
+}
+
+fn record_codex_success(quota: &ProviderQuota) {
+    if let Ok(mut tracker) = CODEX_TRACKER.lock() {
+        tracker.last_valid_quota = Some(quota.clone());
+        tracker.consecutive_errors = 0;
+        tracker.next_retry_time = None;
+        tracker.last_backoff_secs = 0;
+    }
+}
+
+fn record_codex_failure(error_msg: String) -> ProviderQuota {
+    let mut tracker = match CODEX_TRACKER.lock() {
+        Ok(t) => t,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    tracker.consecutive_errors += 1;
+    let backoff_secs = calculate_backoff_secs(tracker.consecutive_errors);
+    tracker.next_retry_time = Some(Instant::now() + Duration::from_secs(backoff_secs));
+    tracker.last_backoff_secs = backoff_secs;
+
+    let now = get_now_unix();
+    if let Some(mut cached) = tracker.last_valid_quota.clone() {
+        cached.connected = false;
+        cached.is_fallback = Some(true);
+        cached.retry_in_sec = Some(backoff_secs);
+        cached.is_active = Some(false);
+        cached.error_message = Some(format!(
+            "{} (Đang dùng dữ liệu cũ, thử lại sau {}s - lần {})",
+            error_msg, backoff_secs, tracker.consecutive_errors
+        ));
+        cached.last_updated_unix = now;
+        cached
+    } else {
+        ProviderQuota {
+            provider: "codex".to_string(),
+            connected: false,
+            is_fallback: Some(false),
+            retry_in_sec: Some(backoff_secs),
+            is_active: Some(false),
+            error_message: Some(format!(
+                "{} (Thử lại sau {}s - lần {})",
+                error_msg, backoff_secs, tracker.consecutive_errors
+            )),
+            account_email: None,
+            plan_type: None,
+            five_hour: None,
+            weekly: None,
+            secondary_quota: None,
+            secondary_label: None,
+            last_updated_unix: now,
+        }
+    }
+}
+
+fn should_retry_codex() -> bool {
+    if let Ok(tracker) = CODEX_TRACKER.lock() {
+        if tracker.consecutive_errors > 0 {
+            if let Some(next_time) = tracker.next_retry_time {
+                return Instant::now() >= next_time;
+            }
+        }
+    }
+    false
 }
 
 fn get_now_unix() -> i64 {
@@ -104,60 +203,70 @@ fn get_codex_auth_path() -> Option<PathBuf> {
     None
 }
 
+/// Kiểm tra xem Codex có đang thực hiện tác vụ / suy nghĩ / sinh code không
+/// Ưu tiên 1: Lấy trực tiếp từ bộ phát hiện ngữ nghĩa thời gian thực (codex_detector)
+/// Ưu tiên 2 (Fallback): Quét file sửa đổi gần nhất trong ~/.codex nếu bộ detector chưa bắt được session
+pub fn check_codex_is_working() -> bool {
+    if crate::codex_detector::is_codex_active() {
+        return true;
+    }
+
+    let base_dirs = [
+        std::env::var("USERPROFILE").ok().map(|p| PathBuf::from(p).join(".codex")),
+        std::env::var("HOME").ok().map(|p| PathBuf::from(p).join(".codex")),
+    ];
+
+    let now = std::time::SystemTime::now();
+
+    for dir in base_dirs.iter().flatten() {
+        if !dir.exists() {
+            continue;
+        }
+
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let file_name = entry.file_name().to_string_lossy().to_lowercase();
+                if file_name.ends_with(".sqlite-wal")
+                    || file_name.ends_with(".jsonl")
+                    || file_name == ".codex-global-state.json"
+                {
+                    if let Ok(meta) = entry.metadata() {
+                        if let Ok(modified) = meta.modified() {
+                            if let Ok(elapsed) = now.duration_since(modified) {
+                                if elapsed <= Duration::from_millis(3500) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Fetch Quota của OpenAI Codex
 async fn fetch_codex_quota() -> ProviderQuota {
     let now = get_now_unix();
     let auth_path = match get_codex_auth_path() {
         Some(p) => p,
         None => {
-            return ProviderQuota {
-                provider: "codex".to_string(),
-                connected: false,
-                error_message: Some("Không tìm thấy file ~/.codex/auth.json (chưa đăng nhập Codex CLI)".to_string()),
-                account_email: None,
-                plan_type: None,
-                five_hour: None,
-                weekly: None,
-                secondary_quota: None,
-                secondary_label: None,
-                last_updated_unix: now,
-            };
+            return record_codex_failure("Không tìm thấy file ~/.codex/auth.json (chưa đăng nhập Codex CLI)".to_string());
         }
     };
 
     let content = match tokio::fs::read_to_string(&auth_path).await {
         Ok(c) => c,
         Err(e) => {
-            return ProviderQuota {
-                provider: "codex".to_string(),
-                connected: false,
-                error_message: Some(format!("Không thể đọc auth.json: {}", e)),
-                account_email: None,
-                plan_type: None,
-                five_hour: None,
-                weekly: None,
-                secondary_quota: None,
-                secondary_label: None,
-                last_updated_unix: now,
-            };
+            return record_codex_failure(format!("Không thể đọc auth.json: {}", e));
         }
     };
 
     let json_val: serde_json::Value = match serde_json::from_str(&content) {
         Ok(v) => v,
         Err(e) => {
-            return ProviderQuota {
-                provider: "codex".to_string(),
-                connected: false,
-                error_message: Some(format!("Lỗi parse JSON auth.json: {}", e)),
-                account_email: None,
-                plan_type: None,
-                five_hour: None,
-                weekly: None,
-                secondary_quota: None,
-                secondary_label: None,
-                last_updated_unix: now,
-            };
+            return record_codex_failure(format!("Lỗi parse JSON auth.json: {}", e));
         }
     };
 
@@ -172,18 +281,7 @@ async fn fetch_codex_quota() -> ProviderQuota {
     let token_str = match token {
         Some(t) if !t.is_empty() => t.to_string(),
         _ => {
-            return ProviderQuota {
-                provider: "codex".to_string(),
-                connected: false,
-                error_message: Some("Không tìm thấy access_token trong auth.json".to_string()),
-                account_email: None,
-                plan_type: None,
-                five_hour: None,
-                weekly: None,
-                secondary_quota: None,
-                secondary_label: None,
-                last_updated_unix: now,
-            };
+            return record_codex_failure("Không tìm thấy access_token trong auth.json".to_string());
         }
     };
 
@@ -254,9 +352,12 @@ async fn fetch_codex_quota() -> ProviderQuota {
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
 
-                    return ProviderQuota {
+                    let quota = ProviderQuota {
                         provider: "codex".to_string(),
                         connected: true,
+                        is_fallback: Some(false),
+                        retry_in_sec: None,
+                        is_active: Some(check_codex_is_working()),
                         error_message: None,
                         account_email,
                         plan_type: plan.or_else(|| Some("ChatGPT / Codex".to_string())),
@@ -270,47 +371,139 @@ async fn fetch_codex_quota() -> ProviderQuota {
                         secondary_label: None,
                         last_updated_unix: now,
                     };
+
+                    record_codex_success(&quota);
+                    return quota;
                 }
             } else if status.as_u16() == 401 {
-                return ProviderQuota {
-                    provider: "codex".to_string(),
-                    connected: false,
-                    error_message: Some("Token Codex đã hết hạn. Hãy chạy 'codex login' để làm mới".to_string()),
-                    account_email,
-                    plan_type: None,
-                    five_hour: None,
-                    weekly: None,
-                    secondary_quota: None,
-                    secondary_label: None,
-                    last_updated_unix: now,
-                };
+                return record_codex_failure("Token Codex đã hết hạn. Hãy chạy 'codex login' để làm mới".to_string());
             }
 
-            ProviderQuota {
-                provider: "codex".to_string(),
-                connected: false,
-                error_message: Some(format!("Máy chủ Codex phản hồi mã HTTP {}", status)),
-                account_email,
-                plan_type: None,
-                five_hour: None,
-                weekly: None,
-                secondary_quota: None,
-                secondary_label: None,
-                last_updated_unix: now,
+            record_codex_failure(format!("Máy chủ Codex phản hồi mã HTTP {}", status))
+        }
+        Err(e) => {
+            record_codex_failure(format!("Lỗi kết nối máy chủ Codex: {}", e))
+        }
+    }
+}
+
+/// Tìm binary agy trên máy (ưu tiên Local AppData, PATH)
+fn find_agy_executable() -> PathBuf {
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let p = PathBuf::from(&local_app_data).join("agy").join("bin").join("agy.exe");
+        if p.exists() {
+            return p;
+        }
+        let p_cmd = PathBuf::from(&local_app_data).join("agy").join("bin").join("agy.cmd");
+        if p_cmd.exists() {
+            return p_cmd;
+        }
+    }
+    if let Ok(user_profile) = std::env::var("USERPROFILE") {
+        let p = PathBuf::from(&user_profile).join("AppData").join("Local").join("agy").join("bin").join("agy.exe");
+        if p.exists() {
+            return p;
+        }
+    }
+    PathBuf::from("agy")
+}
+
+/// Chuyển đổi chuỗi ISO8601 (e.g. "2026-09-16T18:03:49Z") thành unix timestamp
+fn parse_iso8601_to_unix(iso: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(iso)
+        .ok()
+        .map(|dt| dt.timestamp())
+}
+
+/// Fetch Quota trực tiếp qua agy CLI (`agy -p "/usage" --output-format json`)
+async fn fetch_antigravity_via_cli() -> Option<ProviderQuota> {
+    let now = get_now_unix();
+    let agy_bin = find_agy_executable();
+
+    let mut cmd = tokio::process::Command::new(agy_bin);
+    cmd.args(["-p", "/usage", "--output-format", "json"]);
+    
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let output = match tokio::time::timeout(Duration::from_secs(8), cmd.output()).await {
+        Ok(Ok(out)) if out.status.success() => out,
+        _ => return None,
+    };
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let res_json: serde_json::Value = serde_json::from_str(stdout_str.trim()).ok()?;
+
+    if res_json.get("status").and_then(|s| s.as_str()) != Some("SUCCESS") {
+        return None;
+    }
+
+    let groups = res_json.pointer("/command/data/groups").and_then(|v| v.as_array())?;
+
+    let mut gemini_5h: Option<QuotaWindow> = None;
+    let mut gemini_weekly: Option<QuotaWindow> = None;
+    let mut claude_5h: Option<QuotaWindow> = None;
+    let mut claude_weekly: Option<QuotaWindow> = None;
+
+    for group in groups {
+        let group_name = group.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_lowercase();
+        let buckets = group.get("buckets").and_then(|v| v.as_array());
+
+        if let Some(b_list) = buckets {
+            for b in b_list {
+                let window = b.get("window").and_then(|v| v.as_str()).unwrap_or_default();
+                let remaining_fraction = b.get("remaining_fraction").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                let pct = (remaining_fraction * 100.0).round().max(0.0).min(100.0);
+                let reset_iso = b.get("reset_time").and_then(|v| v.as_str());
+                let reset_ts = reset_iso.and_then(parse_iso8601_to_unix);
+                let reset_desc = b.get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| reset_ts.map(format_duration_desc));
+
+                let quota_win = QuotaWindow {
+                    percent_remaining: pct,
+                    reset_time_desc: reset_desc,
+                    reset_timestamp: reset_ts,
+                };
+
+                if group_name.contains("gemini") {
+                    if window == "5h" {
+                        gemini_5h = Some(quota_win);
+                    } else if window == "weekly" {
+                        gemini_weekly = Some(quota_win);
+                    }
+                } else if group_name.contains("claude") || group_name.contains("gpt") || group_name.contains("3p") {
+                    if window == "5h" {
+                        claude_5h = Some(quota_win);
+                    } else if window == "weekly" {
+                        claude_weekly = Some(quota_win);
+                    }
+                }
             }
         }
-        Err(e) => ProviderQuota {
-            provider: "codex".to_string(),
-            connected: false,
-            error_message: Some(format!("Lỗi kết nối máy chủ Codex: {}", e)),
-            account_email,
-            plan_type: None,
-            five_hour: None,
-            weekly: None,
-            secondary_quota: None,
-            secondary_label: None,
+    }
+
+    if gemini_5h.is_some() || gemini_weekly.is_some() || claude_5h.is_some() {
+        Some(ProviderQuota {
+            provider: "antigravity".to_string(),
+            connected: true,
+            is_fallback: Some(false),
+            retry_in_sec: None,
+            is_active: None,
+            error_message: None,
+            account_email: None,
+            plan_type: Some("Google Antigravity".to_string()),
+            five_hour: gemini_5h.or_else(|| gemini_weekly.clone()),
+            weekly: gemini_weekly,
+            secondary_quota: claude_5h.or_else(|| claude_weekly.clone()),
+            secondary_label: Some("Claude / GPT".to_string()),
             last_updated_unix: now,
-        },
+        })
+    } else {
+        None
     }
 }
 
@@ -354,6 +547,12 @@ fn find_antigravity_language_server(sys: &mut System) -> Option<(u16, Option<Str
 
 /// Fetch Quota của Google Antigravity
 async fn fetch_antigravity_quota(sys: &mut System) -> ProviderQuota {
+    // 1. Thử lấy qua CLI `agy -p "/usage" --output-format json` trước
+    if let Some(quota) = fetch_antigravity_via_cli().await {
+        return quota;
+    }
+
+    // 2. Nếu CLI không khả dụng, fallback sang quét cổng Language Server cục bộ
     let now = get_now_unix();
     let server_info = find_antigravity_language_server(sys);
 
@@ -407,6 +606,9 @@ async fn fetch_antigravity_quota(sys: &mut System) -> ProviderQuota {
                     return ProviderQuota {
                         provider: "antigravity".to_string(),
                         connected: true,
+                        is_fallback: Some(false),
+                        retry_in_sec: None,
+                        is_active: None,
                         error_message: None,
                         account_email: res_json.get("user_email").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         plan_type: Some("Antigravity Pro".to_string()),
@@ -429,6 +631,9 @@ async fn fetch_antigravity_quota(sys: &mut System) -> ProviderQuota {
     ProviderQuota {
         provider: "antigravity".to_string(),
         connected: false,
+        is_fallback: Some(false),
+        retry_in_sec: None,
+        is_active: None,
         error_message: None,
         account_email: None,
         plan_type: None,
@@ -513,8 +718,77 @@ fn check_active_window_is_ide() -> (bool, Option<String>) {
     }
 }
 
+/// Kiểm tra xem có bất kỳ cửa sổ / tiến trình VS Code / Codex / Antigravity nào đang mở trên hệ thống không
+#[cfg(target_os = "windows")]
+fn check_ide_is_open() -> (bool, Option<String>) {
+    use winapi::shared::minwindef::{BOOL, LPARAM, TRUE};
+    use winapi::shared::windef::HWND;
+    use winapi::um::winuser::{EnumWindows, GetWindowTextLengthW, GetWindowTextW, IsWindowVisible};
+
+    struct WindowSearchData {
+        found: bool,
+        app_name: Option<String>,
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let data = &mut *(lparam as *mut WindowSearchData);
+        if IsWindowVisible(hwnd) != 0 {
+            let len = GetWindowTextLengthW(hwnd);
+            if len > 0 && len < 1024 {
+                let mut buf = vec![0u16; (len + 1) as usize];
+                let n = GetWindowTextW(hwnd, buf.as_mut_ptr(), (len + 1) as i32);
+                if n > 0 {
+                    let title = String::from_utf16_lossy(&buf[..n as usize]).to_lowercase();
+                    if title.contains("visual studio code") || title.ends_with(" - code") || title == "code" {
+                        data.found = true;
+                        data.app_name = Some("VS Code".to_string());
+                        return 0; // stop enum
+                    } else if title.contains("codex") {
+                        data.found = true;
+                        data.app_name = Some("Codex".to_string());
+                        return 0;
+                    } else if title.contains("cursor") {
+                        data.found = true;
+                        data.app_name = Some("Cursor".to_string());
+                        return 0;
+                    } else if title.contains("antigravity") {
+                        data.found = true;
+                        data.app_name = Some("Antigravity".to_string());
+                        return 0;
+                    } else if title.contains("windsurf") {
+                        data.found = true;
+                        data.app_name = Some("Windsurf".to_string());
+                        return 0;
+                    }
+                }
+            }
+        }
+        TRUE
+    }
+
+    let mut data = WindowSearchData {
+        found: false,
+        app_name: None,
+    };
+
+    unsafe {
+        EnumWindows(Some(enum_proc), &mut data as *mut _ as LPARAM);
+    }
+
+    if data.found {
+        (true, data.app_name)
+    } else {
+        check_active_window_is_ide()
+    }
+}
+
 #[cfg(not(target_os = "windows"))]
 fn check_active_window_is_ide() -> (bool, Option<String>) {
+    (false, None)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn check_ide_is_open() -> (bool, Option<String>) {
     (false, None)
 }
 
@@ -536,13 +810,15 @@ pub async fn fetch_all_quota_data() -> AiQuotaPayload {
     };
 
     let (active_is_ide, active_app) = check_active_window_is_ide();
+    let (ide_open, open_app) = check_ide_is_open();
     let now = get_now_unix();
 
     let payload = AiQuotaPayload {
         codex: codex_quota,
         antigravity: antigravity_quota,
         active_window_is_ide: active_is_ide,
-        active_app_name: active_app,
+        ide_is_open: ide_open,
+        active_app_name: active_app.or(open_app),
         timestamp: now,
     };
 
@@ -559,9 +835,11 @@ pub fn start_ai_quota_monitor(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut last_poll = Instant::now() - Duration::from_secs(300);
         let mut was_ide_active = false;
+        let mut was_ide_open = false;
+        let mut was_codex_active = false;
 
         loop {
-            tokio::time::sleep(Duration::from_millis(1000)).await;
+            tokio::time::sleep(Duration::from_millis(800)).await;
 
             let settings = { GLOBAL_AI_SETTINGS.lock().unwrap().clone() };
             if !settings.enabled {
@@ -569,23 +847,47 @@ pub fn start_ai_quota_monitor(app: AppHandle) {
             }
 
             let (is_ide, app_name) = check_active_window_is_ide();
+            let (is_open, open_app_name) = check_ide_is_open();
+            let is_codex_active = if settings.show_codex {
+                check_codex_is_working()
+            } else {
+                false
+            };
+
+            let is_match = is_ide || is_open;
             let interval = Duration::from_secs(settings.refresh_interval_sec.max(15));
-            let should_poll = last_poll.elapsed() >= interval || (is_ide && !was_ide_active);
+            let codex_retry_due = settings.show_codex && should_retry_codex();
+            let should_poll = codex_retry_due
+                || last_poll.elapsed() >= interval
+                || (is_match && (!was_ide_active && !was_ide_open));
+
+            let codex_active_changed = is_codex_active != was_codex_active;
+            let window_state_changed = is_ide != was_ide_active || is_open != was_ide_open;
 
             if should_poll {
                 last_poll = Instant::now();
-                let payload = fetch_all_quota_data().await;
+                let mut payload = fetch_all_quota_data().await;
+                if let Some(ref mut c) = payload.codex {
+                    c.is_active = Some(is_codex_active);
+                }
                 let _ = app.emit("ai-quota-event", payload);
-            } else if is_ide != was_ide_active {
-                // Cập nhật trạng thái active window mà không cần fetch lại toàn bộ HTTP
+            } else if window_state_changed || codex_active_changed {
+                // Cập nhật trạng thái active/open window hoặc trạng thái Codex working mà không cần fetch lại toàn bộ HTTP
                 if let Some(mut cached) = LATEST_PAYLOAD.lock().unwrap().clone() {
                     cached.active_window_is_ide = is_ide;
-                    cached.active_app_name = app_name;
-                    let _ = app.emit("ai-quota-event", cached);
+                    cached.ide_is_open = is_open;
+                    cached.active_app_name = app_name.or(open_app_name);
+                    if let Some(ref mut c) = cached.codex {
+                        c.is_active = Some(is_codex_active);
+                    }
+                    let _ = app.emit("ai-quota-event", cached.clone());
+                    *LATEST_PAYLOAD.lock().unwrap() = Some(cached);
                 }
             }
 
             was_ide_active = is_ide;
+            was_ide_open = is_open;
+            was_codex_active = is_codex_active;
         }
     });
 }

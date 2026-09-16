@@ -34,13 +34,17 @@
                                 </div>
                                 <div class="activity-subtitle" v-if="topActivity.subtitle">{{ topActivity.subtitle }}</div>
                                 <div v-if="topActivity.show_progress !== false" class="activity-progress-row">
-                                    <div class="activity-progress-track">
-                                        <div class="activity-progress-fill"
-                                            :class="{ 'is-indeterminate': topActivity.progress == null }"
-                                            :style="topActivity.progress != null ? { width: topActivity.progress + '%' } : {}">
+                                    <div class="activity-energy-line" :class="`state-${currentAiActivityState}`">
+                                        <div class="energy-stream"></div>
+                                        <div class="energy-shimmer"></div>
+                                        <div class="energy-sparkles">
+                                            <span class="sparkle s1"></span>
+                                            <span class="sparkle s2"></span>
+                                            <span class="sparkle s3"></span>
+                                            <span class="sparkle s4"></span>
+                                            <span class="sparkle s5"></span>
                                         </div>
                                     </div>
-                                    <span v-if="topActivity.progress != null" class="activity-progress-text">{{ topActivity.progress }}%</span>
                                 </div>
                             </div>
                         </div>
@@ -55,6 +59,27 @@
                                     <span class="app-name">{{ msgAppName }}</span>
                                 </div>
                                 <div class="msg-body">{{ msgBody }}</div>
+                            </div>
+                        </div>
+
+                        <div v-else-if="displaySongChangeBanner" class="song-change-banner-box" key="song_banner">
+                            <div class="song-banner-icon">
+                                <div v-if="coverUrl && !isCoverPlaceholder(coverUrl)" class="song-banner-cover" :style="{ backgroundImage: `url(${coverUrl})` }"></div>
+                                <div v-else class="song-banner-fallback">
+                                    <svg viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div class="song-banner-mask" ref="songBannerMaskRef">
+                                <div class="song-banner-marquee" ref="songBannerTextRef"
+                                    :class="{ 'is-scrolling': songBannerScrollDist > 0 }"
+                                    :style="{
+                                        '--song-scroll-dist': `${songBannerScrollDist}px`,
+                                        '--song-scroll-duration': songBannerDuration
+                                    }">
+                                    {{ songBannerText }}
+                                </div>
                             </div>
                         </div>
 
@@ -143,14 +168,14 @@
                                 <div v-if="!isAiQuotaHovered" class="ai-quota-compact" key="compact">
                                     <!-- Solo Codex Mode: 2 rows with 5h & 1w progress -->
                                     <template v-if="enableCodexQuota && !enableAntigravityQuota">
-                                        <div class="solo-codex" :title="`Codex: 5h: ${codex5hRemaining ?? '--'}%, 1w: ${codexWeeklyRemaining ?? '--'}%`">
+                                        <div class="solo-codex" :class="{ 'is-active': isCodexActive }" :title="`Codex: 5h: ${codex5hRemaining ?? '--'}%, 1w: ${codexWeeklyRemaining ?? '--'}%${isCodexActive ? ' (✦ Active)' : ''}`">
                                             <div class="solo-codex-row">
                                                 <span class="solo-quota-label">5h</span>
                                                 <span class="solo-quota-value" :style="{ color: getQuotaColor(codex5hRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)) }">
                                                     {{ codex5hRemaining != null ? `${codex5hRemaining}%` : (aiQuotaData?.codex?.connected ? '100%' : '--') }}
                                                 </span>
                                                 <div class="solo-progress">
-                                                    <div class="solo-progress-fill" :style="{ width: `${codex5hRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)}%`, backgroundColor: getQuotaColor(codex5hRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)) }"></div>
+                                                    <div class="solo-progress-fill" :class="{ 'is-active': isCodexActive }" :style="{ width: `${codex5hRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)}%`, backgroundColor: getQuotaColor(codex5hRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)) }"></div>
                                                 </div>
                                             </div>
                                             <div class="solo-codex-row">
@@ -159,7 +184,7 @@
                                                     {{ codexWeeklyRemaining != null ? `${codexWeeklyRemaining}%` : (aiQuotaData?.codex?.connected ? '100%' : '--') }}
                                                 </span>
                                                 <div class="solo-progress">
-                                                    <div class="solo-progress-fill" :style="{ width: `${codexWeeklyRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)}%`, backgroundColor: getQuotaColor(codexWeeklyRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)) }"></div>
+                                                    <div class="solo-progress-fill" :class="{ 'is-active': isCodexActive }" :style="{ width: `${codexWeeklyRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)}%`, backgroundColor: getQuotaColor(codexWeeklyRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)) }"></div>
                                                 </div>
                                             </div>
                                         </div>
@@ -184,11 +209,12 @@
 
                                     <!-- Dual Mode: Codex: [X]% | AGY: [Y]% -->
                                     <template v-else>
-                                        <div class="quota-pill codex-pill" :title="`Codex 5h: ${codex5hRemaining ?? '--'}%`">
+                                        <div class="quota-pill codex-pill" :class="{ 'is-active': isCodexActive }" :title="`Codex 5h: ${codex5hRemaining ?? '--'}%${isCodexActive ? ' (✦ Active)' : ''}`">
                                             <span class="quota-brand-name codex-brand">Codex:</span>
                                             <span class="quota-percent" :style="{ color: getQuotaColor(codex5hRemaining ?? 100) }">
                                                 {{ codex5hRemaining != null ? `${codex5hRemaining}%` : (aiQuotaData?.codex?.connected ? '100%' : 'OFF') }}
                                             </span>
+                                            <span v-if="isCodexActive" class="codex-active-dot"></span>
                                         </div>
                                         <div class="quota-divider"></div>
                                         <div class="quota-pill agy-pill" :title="`AGY: ${antigravityPrimaryRemaining ?? '--'}%`">
@@ -222,8 +248,9 @@
                                     <div v-if="enableCodexQuota" class="hud-provider-section">
                                         <div class="hud-provider-header">
                                             <div class="hud-provider-badge codex-tag">
-                                                <span class="provider-dot"></span>
+                                                <span class="provider-dot" :class="{ 'is-pulsing': isCodexActive }"></span>
                                                 <span>OpenAI Codex</span>
+                                                <span v-if="codexStatusText" class="hud-active-badge">{{ codexStatusText }}</span>
                                             </div>
                                             <span v-if="aiQuotaData?.codex?.plan_type" class="hud-plan-badge">{{ aiQuotaData.codex.plan_type }}</span>
                                             <span v-else class="hud-status-badge" :class="{ active: aiQuotaData?.codex?.connected }">
@@ -496,13 +523,13 @@
                 </div>
 
                 <transition mode="out-in" @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
-                    <div v-if="showSpectrumIndicator" class="audio-spectrum"
+                    <div v-if="showSpectrumIndicator && !displaySongChangeBanner" class="audio-spectrum"
                         :class="{ 'is-playing': isPlaying, 'expanded': isMusicExpanded }" key="spectrum">
                         <span class="bar" v-for="(val, index) in spectrumData" :key="index"
                             :style="{ transform: `scaleY(${val})` }"></span>
                     </div>
 
-                    <div v-else :class="['status-dot', networkStatus]" key="dot"></div>
+                    <div v-else-if="!displaySongChangeBanner" :class="['status-dot', networkStatus]" key="dot"></div>
                 </transition>
             </div>
         </div>
@@ -899,6 +926,83 @@ watch(displayActivity, (showing) => {
 const isMediaActive = ref(true); // 默认 true，交给首次轮询决定去留
 let isFirstMediaCheck = true;    // 标记首次检查，防止开机启动时乱弹窗
 let isNewlyEnabled = false;
+
+// ==================== 切歌横向滚动通知 Banner (Song Change Marquee Banner) ====================
+const displaySongChangeBanner = ref(false);
+const songBannerText = ref('');
+const songBannerScrollDist = ref(0);
+const songBannerDuration = ref('3s');
+const songBannerMaskRef = ref<HTMLElement | null>(null);
+const songBannerTextRef = ref<HTMLElement | null>(null);
+let songBannerTimer: number | null = null;
+
+const endSongBanner = () => {
+    if (songBannerTimer) {
+        clearTimeout(songBannerTimer);
+        songBannerTimer = null;
+    }
+    displaySongChangeBanner.value = false;
+    songBannerScrollDist.value = 0;
+    if (!isMsgActive.value && !displayActivity.value && !isMusicExpanded.value && !isMusicExpanding.value) {
+        const { w, h } = getBaseSize();
+        animateIslandSize(w, h);
+    }
+};
+
+const triggerSongChangeNotification = (text: string) => {
+    if (songBannerTimer) {
+        clearTimeout(songBannerTimer);
+        songBannerTimer = null;
+    }
+    songBannerText.value = text;
+    songBannerScrollDist.value = 0;
+    displaySongChangeBanner.value = true;
+
+    // 展开到标准媒体尺寸以容纳跑马灯通知
+    const targetW = Math.max(nsdMusicBaseWidth.value || 260, 260);
+    const targetH = Math.max(nsdBaseHeight.value || 34, 34);
+    animateIslandSize(targetW, targetH);
+
+    const performMeasurement = () => {
+        if (!displaySongChangeBanner.value) return;
+        const maskEl = songBannerMaskRef.value;
+        const textEl = songBannerTextRef.value;
+
+        if (textEl) {
+            // 获取文字实际完整宽度
+            const textW = textEl.scrollWidth || textEl.getBoundingClientRect().width;
+            const maskW = maskEl && maskEl.clientWidth > 20 ? maskEl.clientWidth : (targetW - 55);
+
+            if (textW > maskW + 4) {
+                const dist = Math.ceil(textW - maskW + 20);
+                songBannerScrollDist.value = dist;
+                // 自然阅读速度：约 28 px/秒
+                const moveSec = dist / 28;
+                // 16% 开头停顿 + 68% 平滑移动 + 16% 结尾停顿
+                const totalSec = Math.max(moveSec / 0.68, 3.8);
+                songBannerDuration.value = `${totalSec.toFixed(2)}s`;
+
+                if (songBannerTimer) clearTimeout(songBannerTimer);
+                songBannerTimer = window.setTimeout(() => {
+                    endSongBanner();
+                }, (totalSec * 1000) + 300);
+            } else {
+                songBannerScrollDist.value = 0;
+                if (!songBannerTimer) {
+                    songBannerTimer = window.setTimeout(() => {
+                        endSongBanner();
+                    }, 3000);
+                }
+            }
+        }
+    };
+
+    nextTick(() => {
+        performMeasurement();
+        // 尺寸展开动画大约 250ms，动画结束后再次精准校验
+        setTimeout(performMeasurement, 280);
+    });
+};
 
 // 系统操作通知专用变量
 const displaySysToast = ref(false);
@@ -1940,6 +2044,9 @@ interface QuotaWindow {
 interface ProviderQuota {
     provider: string; // "codex" | "antigravity"
     connected: boolean;
+    is_fallback?: boolean | null;
+    retry_in_sec?: number | null;
+    is_active?: boolean | null;
     error_message?: string | null;
     account_email?: string | null;
     plan_type?: string | null;
@@ -1950,10 +2057,22 @@ interface ProviderQuota {
     last_updated_unix: number;
 }
 
+interface CodexActivityPayload {
+    state: 'idle' | 'thinking' | 'executing' | 'waiting_approval' | 'review' | 'failed';
+    session_id?: string | null;
+    turn_id?: string | null;
+    active_tool?: string | null;
+    detail_message?: string | null;
+    since_unix_ms: number;
+    confidence: number;
+    source: string;
+}
+
 interface AiQuotaPayload {
     codex?: ProviderQuota | null;
     antigravity?: ProviderQuota | null;
     active_window_is_ide: boolean;
+    ide_is_open?: boolean;
     active_app_name?: string | null;
     timestamp: number;
 }
@@ -1961,23 +2080,90 @@ interface AiQuotaPayload {
 const enableAiQuota = ref(localStorage.getItem('nsd_ai_quota_enabled') !== 'false');
 const enableCodexQuota = ref(localStorage.getItem('nsd_ai_quota_codex') !== 'false');
 const enableAntigravityQuota = ref(localStorage.getItem('nsd_ai_quota_antigravity') !== 'false');
-const quotaDisplayMode = ref<'auto' | 'always'>((localStorage.getItem('nsd_ai_quota_mode') as 'auto' | 'always') || 'auto');
+const quotaDisplayMode = ref<'auto' | 'open' | 'always'>((localStorage.getItem('nsd_ai_quota_mode') as 'auto' | 'open' | 'always') || 'open');
 const aiQuotaData = ref<AiQuotaPayload | null>(null);
+const codexActivity = ref<CodexActivityPayload | null>(null);
 const isAiQuotaHovered = ref(false);
 const isRefreshingAiQuota = ref(false);
 let unlistenAiQuota: (() => void) | null = null;
 let unlistenAiQuotaSettings: (() => void) | null = null;
+let unlistenCodexActivity: (() => void) | null = null;
+
+const isCodexActive = computed(() => {
+    if (codexActivity.value) {
+        return codexActivity.value.state === 'thinking' || codexActivity.value.state === 'executing';
+    }
+    return !!aiQuotaData.value?.codex?.is_active;
+});
+
+const codexStatusText = computed(() => {
+    if (!codexActivity.value || codexActivity.value.state === 'idle') {
+        return isCodexActive.value ? '✦ Working' : null;
+    }
+    switch (codexActivity.value.state) {
+        case 'thinking':
+            return '✦ Thinking...';
+        case 'executing':
+            return `⚡ ${codexActivity.value.detail_message || 'Executing'}`;
+        case 'waiting_approval':
+            return '⚠️ Approval Required';
+        case 'review':
+            return '✓ Done';
+        case 'failed':
+            return '✕ Failed';
+        default:
+            return '✦ Working';
+    }
+});
+
+const currentAiActivityState = computed<'idle' | 'thinking' | 'executing' | 'waiting' | 'completed' | 'failed'>(() => {
+    if (codexActivity.value && codexActivity.value.state !== 'idle') {
+        switch (codexActivity.value.state) {
+            case 'thinking': return 'thinking';
+            case 'executing': return 'executing';
+            case 'waiting_approval': return 'waiting';
+            case 'review': return 'completed';
+            case 'failed': return 'failed';
+            default: break;
+        }
+    }
+    if (topActivity.value) {
+        const extraState = (topActivity.value.extra as any)?.state;
+        if (extraState && ['thinking', 'executing', 'waiting', 'completed', 'failed'].includes(extraState)) {
+            return extraState;
+        }
+        if (topActivity.value.progress == null) {
+            return 'thinking';
+        }
+        return 'executing';
+    }
+    if (isCodexActive.value) {
+        return 'thinking';
+    }
+    return 'idle';
+});
+
+const lastKnownCodex5h = ref<number | null>(null);
+const lastKnownCodexWeekly = ref<number | null>(null);
 
 const codex5hRemaining = computed(() => {
     const fh = aiQuotaData.value?.codex?.five_hour;
-    if (!fh) return null;
-    return Math.max(0, Math.min(100, Math.round(fh.percent_remaining)));
+    if (fh && typeof fh.percent_remaining === 'number') {
+        const val = Math.max(0, Math.min(100, Math.round(fh.percent_remaining)));
+        lastKnownCodex5h.value = val;
+        return val;
+    }
+    return lastKnownCodex5h.value;
 });
 
 const codexWeeklyRemaining = computed(() => {
     const wk = aiQuotaData.value?.codex?.weekly;
-    if (!wk) return null;
-    return Math.max(0, Math.min(100, Math.round(wk.percent_remaining)));
+    if (wk && typeof wk.percent_remaining === 'number') {
+        const val = Math.max(0, Math.min(100, Math.round(wk.percent_remaining)));
+        lastKnownCodexWeekly.value = val;
+        return val;
+    }
+    return lastKnownCodexWeekly.value;
 });
 
 const antigravityPrimaryRemaining = computed(() => {
@@ -1993,7 +2179,7 @@ const antigravitySecondaryRemaining = computed(() => {
 });
 
 const displayAiQuota = computed(() => {
-    if (!enableAiQuota.value || isMsgActive.value || displaySysToast.value || displayActivity.value || displayClipboard.value) {
+    if (!enableAiQuota.value || isMsgActive.value || displaySongChangeBanner.value || displaySysToast.value || displayActivity.value || displayClipboard.value) {
         return false;
     }
     if (!enableCodexQuota.value && !enableAntigravityQuota.value) {
@@ -2001,6 +2187,9 @@ const displayAiQuota = computed(() => {
     }
     if (quotaDisplayMode.value === 'always') {
         return true;
+    }
+    if (quotaDisplayMode.value === 'open') {
+        return !!(aiQuotaData.value?.ide_is_open || aiQuotaData.value?.active_window_is_ide);
     }
     if (quotaDisplayMode.value === 'auto') {
         return !!aiQuotaData.value?.active_window_is_ide;
@@ -2059,17 +2248,17 @@ const enableCustomDisplay = ref(localStorage.getItem('nsd_custom_display') === '
 const customSlots = ref<(string | null)[]>(JSON.parse(localStorage.getItem('nsd_custom_slots') || '[null, null, null]'));
 
 // 新增 FPS 判定
-const displayFps = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySysToast.value && !displayAiQuota.value && enableFps.value);
+const displayFps = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySongChangeBanner.value && !displaySysToast.value && !displayAiQuota.value && enableFps.value);
 
 // 使用计算属性智能判断当前该显示谁
-const displayCustom = computed(() => !isMsgActive.value && !displaySysToast.value && !displayAiQuota.value && enableCustomDisplay.value);
-const displayResource = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySysToast.value && !displayAiQuota.value && enableSysResource.value && !enableFps.value && (!isMusicCtlEnabled.value || !isMediaActive.value));
-const displaySpeed = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySysToast.value && !displayAiQuota.value && !enableSysResource.value && !enableFps.value && (!isMusicCtlEnabled.value || !isMediaActive.value));
-const displayMusic = computed(() => !isMsgActive.value && !displaySysToast.value && !displayAiQuota.value && isMusicCtlEnabled.value && isMediaActive.value && !enableCustomDisplay.value);
+const displayCustom = computed(() => !isMsgActive.value && !displaySongChangeBanner.value && !displaySysToast.value && !displayAiQuota.value && enableCustomDisplay.value);
+const displayResource = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySongChangeBanner.value && !displaySysToast.value && !displayAiQuota.value && enableSysResource.value && !enableFps.value && (!isMusicCtlEnabled.value || !isMediaActive.value));
+const displaySpeed = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySongChangeBanner.value && !displaySysToast.value && !displayAiQuota.value && !enableSysResource.value && !enableFps.value && (!isMusicCtlEnabled.value || !isMediaActive.value));
+const displayMusic = computed(() => !isMsgActive.value && !displaySongChangeBanner.value && !displaySysToast.value && !displayAiQuota.value && isMusicCtlEnabled.value && isMediaActive.value && !enableCustomDisplay.value);
 
 // 智能判断静默模式下是否该显示：有消息、有系统提示、剪贴板链接通知，或开启了音乐控制且正在播放，或开启了AI Quota且活跃
 const shouldShowInQuietMode = computed(() =>
-    isMsgActive.value || displayActivity.value || displaySysToast.value || displayClipboard.value || (isMusicCtlEnabled.value && isMediaActive.value) || (enableAiQuota.value && (quotaDisplayMode.value === 'always' || !!aiQuotaData.value?.active_window_is_ide))
+    isMsgActive.value || displayActivity.value || displaySongChangeBanner.value || displaySysToast.value || displayClipboard.value || (isMusicCtlEnabled.value && isMediaActive.value) || (enableAiQuota.value && (quotaDisplayMode.value === 'always' || (quotaDisplayMode.value === 'open' ? (aiQuotaData.value?.ide_is_open || aiQuotaData.value?.active_window_is_ide) : !!aiQuotaData.value?.active_window_is_ide)))
 );
 watch(shouldShowInQuietMode, async (newVal) => {
     if (isMsgModeEnabled.value) {
@@ -2296,6 +2485,13 @@ const syncMusicStatus = async () => {
 
             if (isNewTrack) {
                 currentBaseInfo.value = newTrackInfo;
+
+                // Khi chuyển bài: chữ sẽ đè lên cả Media nhúng nhảy và di chuyển ngang đến khi hiển thị full tên bài rồi mới quay về Quota
+                if (enableAiQuota.value && (displayAiQuota.value || displaySongChangeBanner.value) && !isFirstMediaCheck && song && song !== t('noSongPlaying')) {
+                    const notifyText = artist && artist !== t('unknownArtist') ? `${song} · ${artist}` : song;
+                    triggerSongChangeNotification(notifyText);
+                }
+
                 // 记录切歌时刻：用于 fallbackBrowserLogo 判断当前显示封面是否本首歌拉到的（避免晚到兜底覆盖真实封面）
                 songChangeTime = Date.now();
 
@@ -2432,6 +2628,7 @@ const getPlayerName = () => {
         'kugou': t('kugouMusicFull'),
         'echo': 'Echo Music',
         'lx-music': t('lxMusicFull'),
+        'ytmdesktop': 'YouTube Music',
         'other': t('genericMediaFull'),
         'browserPro': t('browserPro')
     };
@@ -2447,6 +2644,7 @@ const getConnectedAppName = (appId: string) => {
     if (id.includes('cloudmusic') || id.includes('netease')) return '网易云音乐';
     if (id.includes('spotify')) return 'Spotify';
     if (id.includes('qqmusic')) return 'QQ音乐';
+    if (id.includes('youtube') || id.includes('ytmdesktop') || id.includes('youtube_music_desktop_app')) return 'YouTube Music';
     if (id.includes('justsolo')) return 'JustSolo';
     // 兜底：去掉 .exe 后缀后展示包名
     return id.replace(/\.exe$/i, '');
@@ -3724,12 +3922,17 @@ onMounted(async () => {
         aiQuotaData.value = event.payload;
     });
 
+    // 监听 Codex 语义活动事件 (JSONL Tailer)
+    unlistenCodexActivity = await listen<CodexActivityPayload>('codex-activity-event', (event) => {
+        codexActivity.value = event.payload;
+    });
+
     // 监听控制台发来的 AI Quota 配置同步指令
     unlistenAiQuotaSettings = await listen<{
         enabled: boolean;
         show_codex: boolean;
         show_antigravity: boolean;
-        display_mode: 'auto' | 'always';
+        display_mode: 'auto' | 'open' | 'always';
         refresh_interval_sec: number;
     }>('control-ai-quota-settings', (event) => {
         enableAiQuota.value = event.payload.enabled;
@@ -3740,9 +3943,10 @@ onMounted(async () => {
 
     // 初始化获取一次 AI Quota 初始设置与数据
     try {
-        const [quotaSettings, initialQuota] = await Promise.all([
+        const [quotaSettings, initialQuota, initialCodexActivity] = await Promise.all([
             invoke<any>('get_ai_quota_settings'),
-            invoke<AiQuotaPayload>('get_ai_quota_data')
+            invoke<AiQuotaPayload>('get_ai_quota_data'),
+            invoke<CodexActivityPayload>('get_codex_activity'),
         ]);
         if (quotaSettings) {
             enableAiQuota.value = quotaSettings.enabled;
@@ -3752,6 +3956,9 @@ onMounted(async () => {
         }
         if (initialQuota) {
             aiQuotaData.value = initialQuota;
+        }
+        if (initialCodexActivity) {
+            codexActivity.value = initialCodexActivity;
         }
     } catch (e) {
         console.error('Failed to load initial AI quota:', e);
@@ -3970,6 +4177,10 @@ onUnmounted(() => {
         unlistenAiQuota();
         unlistenAiQuota = null;
     }
+    if (unlistenCodexActivity) {
+        unlistenCodexActivity();
+        unlistenCodexActivity = null;
+    }
     if (unlistenAiQuotaSettings) {
         unlistenAiQuotaSettings();
         unlistenAiQuotaSettings = null;
@@ -3986,6 +4197,7 @@ onUnmounted(() => {
     clearInterval(spectrumTimer);
     if (speedCycleTimer) clearInterval(speedCycleTimer);
     if (coverRetryTimer) clearTimeout(coverRetryTimer);
+    if (songBannerTimer) clearTimeout(songBannerTimer);
     stopFsHoverMode();
 });
 </script>
@@ -4554,45 +4766,197 @@ onUnmounted(() => {
 .activity-progress-row {
     display: flex;
     align-items: center;
-    gap: 8px;
     width: 100%;
-    margin-top: 1px;
+    margin-top: 2px;
 }
 
-.activity-progress-track {
+/* ==================== ChatGPT Indigo/Lavender/Violet Energy Line ==================== */
+.activity-energy-line {
+    position: relative;
     flex: 1;
-    height: 3px;
-    border-radius: 2px;
-    background: rgba(255, 255, 255, 0.18);
+    height: 2px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 3px rgba(150, 110, 240, 0.30), 0 0 7px rgba(120, 90, 230, 0.12);
+    transition: opacity 0.3s ease, box-shadow 0.3s ease, filter 0.3s ease;
+}
+
+/* Continuous Flowing Energy Stream */
+.energy-stream {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: linear-gradient(
+        90deg,
+        #3249C1 0%,
+        #5960D4 18%,
+        #8A74EC 35%,
+        #B28AF7 50%,
+        #936BE7 68%,
+        #765BD8 82%,
+        #3249C1 100%
+    );
+    background-size: 200% 100%;
+    animation: energy-flow 5s linear infinite;
+}
+
+/* Soft White / Pale Lavender Shimmer Layer */
+.energy-shimmer {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(230, 220, 255, 0.10) 35%,
+        rgba(255, 255, 255, 0.45) 50%,
+        rgba(230, 220, 255, 0.10) 65%,
+        rgba(255, 255, 255, 0) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer-sweep 2.5s ease-in-out infinite;
+    pointer-events: none;
+}
+
+/* Sparse Micro Sparkles Layer */
+.energy-sparkles {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
     overflow: hidden;
 }
 
-.activity-progress-fill {
-    height: 100%;
-    border-radius: 2px;
-    background: var(--activity-accent, rgba(255, 255, 255, 0.9));
-    transition: width 0.12s linear;
+.energy-sparkles .sparkle {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2px;
+    height: 2px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 0 2px rgba(255, 255, 255, 0.9), 0 0 4px rgba(178, 138, 247, 0.8);
+    opacity: 0.2;
+    animation: sparkle-twinkle ease-in-out infinite;
 }
 
-/* 不确定进度：流动动画 */
-.activity-progress-fill.is-indeterminate {
-    width: 34% !important;
-    animation: activity-indeterminate 1.1s ease-in-out infinite;
+.energy-sparkles .s1 { left: 15%; animation-duration: 1.6s; animation-delay: 0.2s; }
+.energy-sparkles .s2 { left: 35%; animation-duration: 2.3s; animation-delay: 0.8s; width: 1.5px; height: 1.5px; }
+.energy-sparkles .s3 { left: 55%; animation-duration: 1.9s; animation-delay: 1.4s; }
+.energy-sparkles .s4 { left: 75%; animation-duration: 2.7s; animation-delay: 0.5s; width: 1.5px; height: 1.5px; }
+.energy-sparkles .s5 { left: 90%; animation-duration: 2.1s; animation-delay: 1.1s; }
+
+/* State Variations */
+.activity-energy-line.state-idle {
+    opacity: 0.35;
+    box-shadow: none;
+}
+.activity-energy-line.state-idle .energy-stream {
+    animation: none;
+    background: rgba(255, 255, 255, 0.12);
+}
+.activity-energy-line.state-idle .energy-shimmer,
+.activity-energy-line.state-idle .energy-sparkles {
+    display: none;
 }
 
-.activity-progress-text {
-    font-size: 10.5px;
-    font-weight: 600;
-    opacity: 0.8;
-    color: #ffffff;
-    min-width: 30px;
-    text-align: right;
-    flex-shrink: 0;
+.activity-energy-line.state-thinking .energy-stream {
+    animation-duration: 5s;
+}
+.activity-energy-line.state-thinking .energy-shimmer {
+    animation-duration: 2.5s;
 }
 
-@keyframes activity-indeterminate {
-    from { transform: translateX(-120%); }
-    to { transform: translateX(320%); }
+.activity-energy-line.state-executing .energy-stream {
+    animation-duration: 3.2s;
+}
+.activity-energy-line.state-executing .energy-shimmer {
+    animation-duration: 1.8s;
+}
+.activity-energy-line.state-executing {
+    box-shadow: 0 0 4px rgba(150, 110, 240, 0.45), 0 0 9px rgba(120, 90, 230, 0.2);
+}
+
+.activity-energy-line.state-waiting {
+    animation: energy-breathe 2.4s ease-in-out infinite alternate;
+}
+.activity-energy-line.state-waiting .energy-stream {
+    animation: none;
+}
+.activity-energy-line.state-waiting .energy-shimmer,
+.activity-energy-line.state-waiting .energy-sparkles {
+    display: none;
+}
+
+.activity-energy-line.state-completed {
+    animation: energy-complete 1.6s ease-out forwards;
+}
+
+.activity-energy-line.state-failed .energy-stream {
+    background: linear-gradient(90deg, #b91c1c 0%, #ef4444 50%, #b91c1c 100%);
+    animation: none;
+}
+.activity-energy-line.state-failed {
+    box-shadow: 0 0 4px rgba(239, 68, 68, 0.4);
+}
+.activity-energy-line.state-failed .energy-sparkles {
+    display: none;
+}
+
+@keyframes energy-flow {
+    0% {
+        background-position: 0% 50%;
+    }
+    100% {
+        background-position: 200% 50%;
+    }
+}
+
+@keyframes shimmer-sweep {
+    0% {
+        background-position: -200% 0;
+    }
+    100% {
+        background-position: 200% 0;
+    }
+}
+
+@keyframes sparkle-twinkle {
+    0%, 100% {
+        opacity: 0.15;
+        transform: translateY(-50%) scale(0.7);
+    }
+    50% {
+        opacity: 0.9;
+        transform: translateY(-50%) scale(1.1);
+    }
+}
+
+@keyframes energy-breathe {
+    0% {
+        opacity: 0.6;
+        filter: brightness(0.85);
+        box-shadow: 0 0 2px rgba(150, 110, 240, 0.2);
+    }
+    100% {
+        opacity: 1;
+        filter: brightness(1.2);
+        box-shadow: 0 0 6px rgba(178, 138, 247, 0.6), 0 0 12px rgba(120, 90, 230, 0.3);
+    }
+}
+
+@keyframes energy-complete {
+    0% {
+        filter: brightness(1);
+        box-shadow: 0 0 4px rgba(178, 138, 247, 0.4);
+    }
+    50% {
+        filter: brightness(1.4);
+        box-shadow: 0 0 8px rgba(178, 138, 247, 0.8), 0 0 16px rgba(147, 107, 231, 0.4);
+    }
+    100% {
+        filter: brightness(1);
+        box-shadow: 0 0 3px rgba(150, 110, 240, 0.3);
+    }
 }
 
 /* 灵动岛剪贴板链接通知卡片样式 */
@@ -5433,6 +5797,117 @@ onUnmounted(() => {
     }
 }
 
+/* ==================== Song Change Marquee Banner Styles ==================== */
+.song-change-banner-box {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    padding: 0 12px 0 10px;
+    box-sizing: border-box;
+    z-index: 25;
+    gap: 8px;
+    -webkit-app-region: no-drag;
+}
+
+.song-banner-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(244, 63, 94, 0.18);
+    color: #f43f5e;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    overflow: hidden;
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.song-banner-cover {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    animation: banner-cover-spin 8s linear infinite;
+    animation-play-state: running;
+    will-change: transform;
+}
+
+.song-banner-fallback {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: banner-cover-spin 8s linear infinite;
+    animation-play-state: running;
+    will-change: transform;
+}
+
+.song-banner-fallback svg {
+    width: 13px;
+    height: 13px;
+}
+
+@keyframes banner-cover-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.song-banner-mask {
+    position: relative;
+    flex: 1;
+    height: 100%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    mask-image: linear-gradient(to right, #000000 90%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, #000000 90%, transparent 100%);
+    min-width: 0;
+}
+
+.song-banner-marquee {
+    display: inline-block !important;
+    width: max-content !important;
+    max-width: none !important;
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+    font-size: 12.5px;
+    font-weight: 650;
+    color: currentColor;
+    opacity: 0.95;
+    will-change: transform;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+}
+
+.song-banner-marquee.is-scrolling {
+    animation: song-banner-scroll var(--song-scroll-duration) linear forwards;
+}
+
+@keyframes song-banner-scroll {
+    0%,
+    16% {
+        transform: translateX(0);
+    }
+    84%,
+    100% {
+        transform: translateX(calc(-1 * var(--song-scroll-dist)));
+    }
+}
+
 /* ==================== AI Quota Box Styles ==================== */
 .ai-quota-box {
     width: 100%;
@@ -5534,6 +6009,120 @@ onUnmounted(() => {
     border-radius: 999px;
     opacity: 0.88;
     transition: width 0.4s ease, background-color 0.4s ease;
+}
+
+/* Solo Codex Working Active State */
+.solo-codex.is-active {
+    animation: codex-active-glow 2.8s ease-in-out infinite alternate;
+}
+
+@keyframes codex-active-glow {
+    0% {
+        filter: drop-shadow(0 0 0px rgba(124, 108, 231, 0));
+    }
+    50% {
+        filter: drop-shadow(0 0 4px rgba(178, 138, 247, 0.45));
+    }
+    100% {
+        filter: drop-shadow(0 0 1px rgba(124, 108, 231, 0.2));
+    }
+}
+
+.solo-progress-fill.is-active {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(
+        90deg,
+        #3249C1 0%,
+        #5960D4 18%,
+        #8A74EC 35%,
+        #B28AF7 50%,
+        #936BE7 68%,
+        #765BD8 82%,
+        #3249C1 100%
+    ) !important;
+    background-size: 200% 100% !important;
+    animation: energy-flow 4.5s linear infinite;
+    box-shadow: 0 0 4px rgba(178, 138, 247, 0.4);
+}
+
+.solo-progress-fill.is-active::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(230, 220, 255, 0.15) 35%,
+        rgba(255, 255, 255, 0.6) 50%,
+        rgba(230, 220, 255, 0.15) 65%,
+        rgba(255, 255, 255, 0) 100%
+    );
+    animation: codex-bar-shimmer 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes codex-bar-shimmer {
+    0% {
+        left: -100%;
+    }
+    100% {
+        left: 200%;
+    }
+}
+
+.codex-pill.is-active {
+    filter: drop-shadow(0 0 2.5px rgba(16, 185, 129, 0.4));
+}
+
+.codex-active-dot {
+    width: 4.5px;
+    height: 4.5px;
+    border-radius: 50%;
+    background-color: #10b981;
+    box-shadow: 0 0 6px #10b981;
+    animation: codex-dot-pulse 1.2s ease-in-out infinite;
+    display: inline-block;
+    margin-left: 1px;
+}
+
+@keyframes codex-dot-pulse {
+    0%, 100% {
+        transform: scale(0.8);
+        opacity: 0.6;
+    }
+    50% {
+        transform: scale(1.35);
+        opacity: 1;
+        box-shadow: 0 0 8px #10b981;
+    }
+}
+
+.provider-dot.is-pulsing {
+    animation: codex-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.hud-active-badge {
+    font-size: 8.5px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(16, 185, 129, 0.22);
+    color: #10b981;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    animation: codex-badge-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes codex-badge-pulse {
+    0%, 100% {
+        opacity: 0.8;
+    }
+    50% {
+        opacity: 1;
+        box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+    }
 }
 
 .quota-pill {

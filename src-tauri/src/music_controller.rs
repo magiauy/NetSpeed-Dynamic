@@ -99,6 +99,17 @@ fn get_target_media_session() -> Option<(GlobalSystemMediaTransportControlsSessi
             {
                 return Some((session, app_id_str));
             }
+            // YouTube Music Desktop App
+            else if (target == "ytmdesktop" || target == "youtube-music")
+                && (app_id_str.contains("youtube")
+                    || app_id_str.contains("ytmdesktop")
+                    || app_id_str.contains("youtube_music_desktop_app")
+                    || app_id_str.contains("youtube-music-desktop-app")
+                    || app_id_str.contains("ytm")
+                    || app_id_str.contains("th-ch.youtube-music"))
+            {
+                return Some((session, app_id_str));
+            }
             // 浏览器Pro：基于通用媒体模式，识别所有媒体（不限定 Edge/Chrome）
             else if target == "browserPro" {
                 return Some((session, app_id_str));
