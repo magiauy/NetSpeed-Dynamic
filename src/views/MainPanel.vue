@@ -213,7 +213,7 @@
                 <div class="dynamicset-grid bottom-grid-card card-pager-outer">
                     <div class="pager-viewport">
                         <div class="pager-track"
-                            :style="{ transform: currentPage === 0 ? 'translateX(0)' : 'translateX(-50%)' }">
+                            :style="{ transform: 'translateX(' + (-currentPage * (100 / 3)) + '%)' }">
 
                             <div class="pager-page">
                                 <div class="set-item" :class="{ 'is-dropdown-open': isLanguageDropdownOpen }">
@@ -507,12 +507,120 @@
                                 </div>
                             </div>
 
+                            <div class="pager-page">
+                                <div class="set-item">
+                                    <div class="set-item-meta">
+                                        <span class="set-item-title">AI Quota</span>
+                                        <span class="set-item-desc">Codex & Antigravity</span>
+                                    </div>
+                                    <label class="switch">
+                                        <input type="checkbox" v-model="enableAiQuota" @change="handleAiQuotaSettingChange">
+                                        <span class="slider"></span>
+                                    </label>
+                                </div>
+
+                                <div class="set-item" :class="{ 'disabled-set-item': !enableAiQuota }">
+                                    <div class="set-item-meta">
+                                        <span class="set-item-title">
+                                            Codex Quota
+                                            <span class="quota-badge" :class="quotaCodexConnected ? 'connected' : 'disconnected'">
+                                                {{ quotaCodexConnected ? 'ON' : 'OFF' }}
+                                            </span>
+                                        </span>
+                                        <span class="set-item-desc" :title="quotaCodexSummary || 'Chưa kết nối'">{{ quotaCodexSummary || 'Chưa kết nối' }}</span>
+                                    </div>
+                                    <label class="switch">
+                                        <input type="checkbox" v-model="enableCodexQuota" :disabled="!enableAiQuota" @change="handleAiQuotaSettingChange">
+                                        <span class="slider"></span>
+                                    </label>
+                                </div>
+
+                                <div class="set-item" :class="{ 'disabled-set-item': !enableAiQuota }">
+                                    <div class="set-item-meta">
+                                        <span class="set-item-title">
+                                            AGY Quota
+                                            <span class="quota-badge" :class="quotaAntigravityConnected ? 'connected' : 'disconnected'">
+                                                {{ quotaAntigravityConnected ? 'ON' : 'OFF' }}
+                                            </span>
+                                        </span>
+                                        <span class="set-item-desc" :title="quotaAntigravitySummary || 'Chưa kết nối'">{{ quotaAntigravitySummary || 'Chưa kết nối' }}</span>
+                                    </div>
+                                    <label class="switch">
+                                        <input type="checkbox" v-model="enableAntigravityQuota" :disabled="!enableAiQuota" @change="handleAiQuotaSettingChange">
+                                        <span class="slider"></span>
+                                    </label>
+                                </div>
+
+                                <div class="set-item" :class="{ 'is-dropdown-open': isQuotaModeDropdownOpen, 'disabled-set-item': !enableAiQuota }">
+                                    <div class="set-item-meta">
+                                        <span class="set-item-title">{{ t('quotaDisplayMode') }}</span>
+                                        <span class="set-item-desc">{{ quotaDisplayMode === 'auto' ? 'Auto (IDE)' : 'Always' }}</span>
+                                    </div>
+                                    <div class="custom-dropdown" tabindex="0" @blur="isQuotaModeDropdownOpen = false">
+                                        <div class="dropdown-trigger" style="width: 100px;" @click="enableAiQuota && (isQuotaModeDropdownOpen = !isQuotaModeDropdownOpen)">
+                                            <div class="current-item">
+                                                {{ quotaDisplayMode === 'auto' ? 'Auto' : 'Always' }}
+                                            </div>
+                                            <svg viewBox="0 0 24 24" class="arrow-icon" :class="{ 'is-open': isQuotaModeDropdownOpen }">
+                                                <path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                                            </svg>
+                                        </div>
+                                        <transition name="dropdown-up">
+                                            <div class="dropdown-menu dropdown-menu-up" v-show="isQuotaModeDropdownOpen">
+                                                <div class="dropdown-item" :class="{ 'is-active': quotaDisplayMode === 'auto' }" @click="selectQuotaMode('auto')">
+                                                    Auto (IDE)
+                                                </div>
+                                                <div class="dropdown-item" :class="{ 'is-active': quotaDisplayMode === 'always' }" @click="selectQuotaMode('always')">
+                                                    Always On
+                                                </div>
+                                            </div>
+                                        </transition>
+                                    </div>
+                                </div>
+
+                                <div class="set-item" :class="{ 'is-dropdown-open': isQuotaIntervalDropdownOpen, 'disabled-set-item': !enableAiQuota }">
+                                    <div class="set-item-meta">
+                                        <span class="set-item-title">{{ t('quotaInterval') }}</span>
+                                        <span class="set-item-desc">{{ quotaRefreshInterval }}s</span>
+                                    </div>
+                                    <div class="custom-dropdown" tabindex="0" @blur="isQuotaIntervalDropdownOpen = false">
+                                        <div class="dropdown-trigger" style="width: 100px;" @click="enableAiQuota && (isQuotaIntervalDropdownOpen = !isQuotaIntervalDropdownOpen)">
+                                            <div class="current-item">
+                                                {{ quotaRefreshInterval }}s
+                                            </div>
+                                            <svg viewBox="0 0 24 24" class="arrow-icon" :class="{ 'is-open': isQuotaIntervalDropdownOpen }">
+                                                <path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                                            </svg>
+                                        </div>
+                                        <transition name="dropdown-up">
+                                            <div class="dropdown-menu dropdown-menu-up" v-show="isQuotaIntervalDropdownOpen">
+                                                <div v-for="sec in [30, 60, 120, 300]" :key="sec" class="dropdown-item" :class="{ 'is-active': quotaRefreshInterval === sec }" @click="selectQuotaInterval(sec)">
+                                                    {{ sec }}s
+                                                </div>
+                                            </div>
+                                        </transition>
+                                    </div>
+                                </div>
+
+                                <div class="set-item" :class="{ 'disabled-set-item': !enableAiQuota }">
+                                    <div class="set-item-meta">
+                                        <span class="set-item-title">{{ t('refreshQuotaNow') }}</span>
+                                        <span class="set-item-desc">{{ lastQuotaRefreshTime || 'Live Sync' }}</span>
+                                    </div>
+                                    <button class="stats-toggle-btn" :disabled="!enableAiQuota || isRefreshingQuota" @click="handleRefreshQuotaNow">
+                                        <span v-if="isRefreshingQuota">...</span>
+                                        <span v-else>🔄 {{ t('refresh') }}</span>
+                                    </button>
+                                </div>
+                            </div>
+
                         </div>
                     </div>
 
                     <div class="pagination-capsule" @click="togglePage">
                         <div class="page-dot" :class="{ active: currentPage === 0 }"></div>
                         <div class="page-dot" :class="{ active: currentPage === 1 }"></div>
+                        <div class="page-dot" :class="{ active: currentPage === 2 }"></div>
                     </div>
                 </div>
             </template>
@@ -598,7 +706,125 @@ const isDynamicSet = ref(false);
 
 const currentPage = ref(0);
 const togglePage = () => {
-    currentPage.value = currentPage.value === 0 ? 1 : 0;
+    currentPage.value = (currentPage.value + 1) % 3;
+};
+
+// -------------------------------------------------------------
+// AI Quota 监控状态与逻辑
+// -------------------------------------------------------------
+interface QuotaWindow {
+    percent_remaining: number;
+    reset_time_desc?: string;
+    reset_timestamp?: number;
+}
+interface ProviderQuota {
+    provider: string;
+    connected: boolean;
+    error_message?: string;
+    account_email?: string;
+    plan_type?: string;
+    five_hour?: QuotaWindow;
+    weekly?: QuotaWindow;
+    secondary_quota?: QuotaWindow;
+    secondary_label?: string;
+    last_updated_unix: number;
+}
+interface AiQuotaPayload {
+    codex?: ProviderQuota;
+    antigravity?: ProviderQuota;
+    active_window_is_ide: boolean;
+    active_app_name?: string;
+    timestamp: number;
+}
+interface AiQuotaSettings {
+    enabled: boolean;
+    show_codex: boolean;
+    show_antigravity: boolean;
+    display_mode: string;
+    refresh_interval_sec: number;
+}
+
+const enableAiQuota = ref(localStorage.getItem('nsd_ai_quota_enabled') !== 'false');
+const enableCodexQuota = ref(localStorage.getItem('nsd_ai_quota_codex') !== 'false');
+const enableAntigravityQuota = ref(localStorage.getItem('nsd_ai_quota_antigravity') !== 'false');
+const quotaDisplayMode = ref<'auto' | 'always'>((localStorage.getItem('nsd_ai_quota_mode') as 'auto' | 'always') || 'auto');
+const quotaRefreshInterval = ref<number>(Number(localStorage.getItem('nsd_ai_quota_interval') || '60'));
+
+const isQuotaModeDropdownOpen = ref(false);
+const isQuotaIntervalDropdownOpen = ref(false);
+const isRefreshingQuota = ref(false);
+const lastQuotaRefreshTime = ref('');
+
+const quotaData = ref<AiQuotaPayload | null>(null);
+
+const quotaCodexConnected = computed(() => !!quotaData.value?.codex?.connected);
+const quotaAntigravityConnected = computed(() => !!quotaData.value?.antigravity?.connected);
+
+const quotaCodexSummary = computed(() => {
+    const q = quotaData.value?.codex;
+    if (!q) return '';
+    if (!q.connected) return 'Chưa kết nối';
+    const fh = q.five_hour?.percent_remaining != null ? `${Math.round(q.five_hour.percent_remaining)}%` : '';
+    const reset = q.five_hour?.reset_time_desc ? ` (${q.five_hour.reset_time_desc})` : '';
+    return `5h: ${fh}${reset}` || 'Đã kết nối';
+});
+
+const quotaAntigravitySummary = computed(() => {
+    const q = quotaData.value?.antigravity;
+    if (!q) return '';
+    if (!q.connected) return 'Chưa kết nối';
+    const gemini = q.five_hour?.percent_remaining != null ? `Gemini: ${Math.round(q.five_hour.percent_remaining)}%` : '';
+    return gemini || 'Đã kết nối';
+});
+
+const selectQuotaMode = (mode: 'auto' | 'always') => {
+    quotaDisplayMode.value = mode;
+    isQuotaModeDropdownOpen.value = false;
+    handleAiQuotaSettingChange();
+};
+
+const selectQuotaInterval = (sec: number) => {
+    quotaRefreshInterval.value = sec;
+    isQuotaIntervalDropdownOpen.value = false;
+    handleAiQuotaSettingChange();
+};
+
+const handleAiQuotaSettingChange = async () => {
+    localStorage.setItem('nsd_ai_quota_enabled', String(enableAiQuota.value));
+    localStorage.setItem('nsd_ai_quota_codex', String(enableCodexQuota.value));
+    localStorage.setItem('nsd_ai_quota_antigravity', String(enableAntigravityQuota.value));
+    localStorage.setItem('nsd_ai_quota_mode', quotaDisplayMode.value);
+    localStorage.setItem('nsd_ai_quota_interval', String(quotaRefreshInterval.value));
+
+    const settings: AiQuotaSettings = {
+        enabled: enableAiQuota.value,
+        show_codex: enableCodexQuota.value,
+        show_antigravity: enableAntigravityQuota.value,
+        display_mode: quotaDisplayMode.value,
+        refresh_interval_sec: quotaRefreshInterval.value,
+    };
+
+    try {
+        await invoke('save_ai_quota_settings', { settings });
+        await emit('control-ai-quota-settings', settings);
+    } catch (e) {
+        console.error('Failed to save AI quota settings', e);
+    }
+};
+
+const handleRefreshQuotaNow = async () => {
+    if (isRefreshingQuota.value) return;
+    isRefreshingQuota.value = true;
+    try {
+        const res = await invoke<AiQuotaPayload>('refresh_ai_quota');
+        quotaData.value = res;
+        const d = new Date();
+        lastQuotaRefreshTime.value = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`;
+    } catch (e) {
+        console.error('Failed to refresh AI quota', e);
+    } finally {
+        isRefreshingQuota.value = false;
+    }
 };
 
 const isChecking = ref(false);
@@ -1619,11 +1845,24 @@ onMounted(async () => {
 
     const savedState = localStorage.getItem('nsd_widget_visible') !== 'false';
     isWidgetVisible.value = savedState;
-    if (savedState) {
-        await emit('control-island-visibility', { show: true });
-    }
-
     emit('control-custom-display', { enabled: enableCustomDisplay.value, slots: customSlots.value }).catch(() => { });
+
+    // 同步 AI Quota 初始设置到 Rust Backend
+    const initialQuotaSettings: AiQuotaSettings = {
+        enabled: enableAiQuota.value,
+        show_codex: enableCodexQuota.value,
+        show_antigravity: enableAntigravityQuota.value,
+        display_mode: quotaDisplayMode.value,
+        refresh_interval_sec: quotaRefreshInterval.value,
+    };
+    invoke('save_ai_quota_settings', { settings: initialQuotaSettings }).catch(() => { });
+    invoke<AiQuotaPayload>('get_ai_quota_data').then((res) => {
+        if (res) quotaData.value = res;
+    }).catch(() => { });
+
+    await listen<AiQuotaPayload>('ai-quota-event', (event) => {
+        quotaData.value = event.payload;
+    });
 
     // 监听来自灵动岛的 FPS 插件缺失信号
     await listen('fps-plugin-missing', () => {
@@ -2428,6 +2667,10 @@ input:checked+.slider:before {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    overflow: hidden;
+    min-width: 0;
+    flex: 1;
+    margin-right: 8px;
 }
 
 .set-item-title {
@@ -2495,6 +2738,9 @@ input:checked+.slider:before {
 .set-item-desc {
     font-size: 12px;
     color: var(--item-desc-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 
@@ -2962,19 +3208,61 @@ input:disabled+.slider {
 /* 快速响应的贝塞尔曲线平滑轨道 */
 .pager-track {
     display: flex;
-    width: 200%;
+    width: 300%;
     transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 /* 每一页保持 3 列网格布局 */
 .pager-page {
-    width: 50%;
+    width: 33.333333%;
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
     row-gap: 5px;
     padding: 0 4px;
     box-sizing: border-box;
     transform: translateY(5px);
+}
+
+.quota-badge {
+    display: inline-block;
+    font-size: 9.5px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+    margin-left: 4px;
+    text-transform: uppercase;
+    line-height: 1.2;
+}
+
+.quota-badge.connected {
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.quota-badge.disconnected {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.dropdown-menu.dropdown-menu-up {
+    top: auto !important;
+    bottom: calc(100% + 6px) !important;
+    transform-origin: bottom right;
+    box-shadow: 0 -10px 25px var(--card-shadow-hover);
+}
+
+.dropdown-up-enter-active,
+.dropdown-up-leave-active {
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    transform-origin: bottom right;
+}
+
+.dropdown-up-enter-from,
+.dropdown-up-leave-to {
+    opacity: 0;
+    transform: scaleY(0.95) translateY(4px);
 }
 
 /* 正下方悬浮翻页小胶囊 */

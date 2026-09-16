@@ -136,6 +136,177 @@
                             </button>
                         </div>
 
+                        <div v-else-if="displayAiQuota" class="ai-quota-box" :class="{ 'expanded': isAiQuotaHovered }" key="ai_quota"
+                            @mouseenter="handleAiQuotaMouseEnter" @mouseleave="handleAiQuotaMouseLeave">
+                            <transition name="quota-morph" mode="out-in">
+                                <!-- Compact Capsule Mode on Island -->
+                                <div v-if="!isAiQuotaHovered" class="ai-quota-compact" key="compact">
+                                    <!-- Solo Codex Mode: 2 rows with 5h & 1w progress -->
+                                    <template v-if="enableCodexQuota && !enableAntigravityQuota">
+                                        <div class="solo-codex" :title="`Codex: 5h: ${codex5hRemaining ?? '--'}%, 1w: ${codexWeeklyRemaining ?? '--'}%`">
+                                            <div class="solo-codex-row">
+                                                <span class="solo-quota-label">5h</span>
+                                                <span class="solo-quota-value" :style="{ color: getQuotaColor(codex5hRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)) }">
+                                                    {{ codex5hRemaining != null ? `${codex5hRemaining}%` : (aiQuotaData?.codex?.connected ? '100%' : '--') }}
+                                                </span>
+                                                <div class="solo-progress">
+                                                    <div class="solo-progress-fill" :style="{ width: `${codex5hRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)}%`, backgroundColor: getQuotaColor(codex5hRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)) }"></div>
+                                                </div>
+                                            </div>
+                                            <div class="solo-codex-row">
+                                                <span class="solo-quota-label">1w</span>
+                                                <span class="solo-quota-value" :style="{ color: getQuotaColor(codexWeeklyRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)) }">
+                                                    {{ codexWeeklyRemaining != null ? `${codexWeeklyRemaining}%` : (aiQuotaData?.codex?.connected ? '100%' : '--') }}
+                                                </span>
+                                                <div class="solo-progress">
+                                                    <div class="solo-progress-fill" :style="{ width: `${codexWeeklyRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)}%`, backgroundColor: getQuotaColor(codexWeeklyRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)) }"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- Solo AGY Mode -->
+                                    <template v-else-if="!enableCodexQuota && enableAntigravityQuota">
+                                        <div class="quota-pill agy-pill" :title="`AGY: ${antigravityPrimaryRemaining ?? '--'}%`">
+                                            <span class="quota-brand-name agy-brand">AGY:</span>
+                                            <span class="quota-percent" :style="{ color: getQuotaColor(antigravityPrimaryRemaining ?? 100) }">
+                                                {{ antigravityPrimaryRemaining != null ? `${antigravityPrimaryRemaining}%` : (aiQuotaData?.antigravity?.connected ? '100%' : 'OFF') }}
+                                            </span>
+                                            <template v-if="antigravitySecondaryRemaining != null">
+                                                <span class="quota-divider-slash">|</span>
+                                                <span class="quota-sub-label">Claude:</span>
+                                                <span class="quota-percent" :style="{ color: getQuotaColor(antigravitySecondaryRemaining ?? 100) }">
+                                                    {{ antigravitySecondaryRemaining }}%
+                                                </span>
+                                            </template>
+                                        </div>
+                                    </template>
+
+                                    <!-- Dual Mode: Codex: [X]% | AGY: [Y]% -->
+                                    <template v-else>
+                                        <div class="quota-pill codex-pill" :title="`Codex 5h: ${codex5hRemaining ?? '--'}%`">
+                                            <span class="quota-brand-name codex-brand">Codex:</span>
+                                            <span class="quota-percent" :style="{ color: getQuotaColor(codex5hRemaining ?? 100) }">
+                                                {{ codex5hRemaining != null ? `${codex5hRemaining}%` : (aiQuotaData?.codex?.connected ? '100%' : 'OFF') }}
+                                            </span>
+                                        </div>
+                                        <div class="quota-divider"></div>
+                                        <div class="quota-pill agy-pill" :title="`AGY: ${antigravityPrimaryRemaining ?? '--'}%`">
+                                            <span class="quota-brand-name agy-brand">AGY:</span>
+                                            <span class="quota-percent" :style="{ color: getQuotaColor(antigravityPrimaryRemaining ?? 100) }">
+                                                {{ antigravityPrimaryRemaining != null ? `${antigravityPrimaryRemaining}%` : (aiQuotaData?.antigravity?.connected ? '100%' : 'OFF') }}
+                                            </span>
+                                        </div>
+                                    </template>
+                                </div>
+
+                                <!-- Expanded HUD Popover Card -->
+                                <div v-else class="ai-quota-expanded" key="expanded">
+                                <div class="hud-header">
+                                    <div class="hud-title-wrap">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="hud-header-icon">
+                                            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        </svg>
+                                        <span class="hud-title">{{ t('aiQuotaMonitor') }}</span>
+                                    </div>
+                                    <button class="hud-refresh-btn" :class="{ 'is-spinning': isRefreshingAiQuota }" @click.stop="handleRefreshAiQuota" :title="t('refresh')">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                            <path d="M23 4v6h-6M1 20v-6h6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        </svg>
+                                    </button>
+                                </div>
+
+                                <div class="hud-cards-container">
+                                    <!-- Codex Section -->
+                                    <div v-if="enableCodexQuota" class="hud-provider-section">
+                                        <div class="hud-provider-header">
+                                            <div class="hud-provider-badge codex-tag">
+                                                <span class="provider-dot"></span>
+                                                <span>OpenAI Codex</span>
+                                            </div>
+                                            <span v-if="aiQuotaData?.codex?.plan_type" class="hud-plan-badge">{{ aiQuotaData.codex.plan_type }}</span>
+                                            <span v-else class="hud-status-badge" :class="{ active: aiQuotaData?.codex?.connected }">
+                                                {{ aiQuotaData?.codex?.connected ? t('active') : t('notDetected') }}
+                                            </span>
+                                        </div>
+                                        <div v-if="aiQuotaData?.codex?.five_hour" class="hud-quota-row">
+                                            <div class="quota-row-label">
+                                                <span>{{ t('fiveHourLimit') }}</span>
+                                                <span v-if="aiQuotaData.codex.five_hour.reset_time_desc" class="quota-reset-hint">{{ aiQuotaData.codex.five_hour.reset_time_desc }}</span>
+                                            </div>
+                                            <div class="quota-progress-track">
+                                                <div class="quota-progress-fill" :style="{ width: `${codex5hRemaining ?? 100}%`, backgroundColor: getQuotaColor(codex5hRemaining ?? 100) }"></div>
+                                            </div>
+                                            <div class="quota-row-value">
+                                                <span :style="{ color: getQuotaColor(codex5hRemaining ?? 100) }">{{ codex5hRemaining ?? 100 }}%</span>
+                                                <span class="quota-unit">{{ t('remaining') }}</span>
+                                            </div>
+                                        </div>
+                                        <div v-if="aiQuotaData?.codex?.weekly" class="hud-quota-row secondary-row">
+                                            <div class="quota-row-label">
+                                                <span>{{ t('weeklyLimit') }}</span>
+                                                <span v-if="aiQuotaData.codex.weekly.reset_time_desc" class="quota-reset-hint">{{ aiQuotaData.codex.weekly.reset_time_desc }}</span>
+                                            </div>
+                                            <div class="quota-progress-track">
+                                                <div class="quota-progress-fill" :style="{ width: `${codexWeeklyRemaining ?? 100}%`, backgroundColor: getQuotaColor(codexWeeklyRemaining ?? 100) }"></div>
+                                            </div>
+                                            <div class="quota-row-value">
+                                                <span :style="{ color: getQuotaColor(codexWeeklyRemaining ?? 100) }">{{ codexWeeklyRemaining ?? 100 }}%</span>
+                                                <span class="quota-unit">{{ t('remaining') }}</span>
+                                            </div>
+                                        </div>
+                                        <div v-if="aiQuotaData?.codex?.error_message" class="hud-error-msg">
+                                            {{ aiQuotaData.codex.error_message }}
+                                        </div>
+                                    </div>
+
+                                    <!-- Antigravity Section -->
+                                    <div v-if="enableAntigravityQuota" class="hud-provider-section">
+                                        <div class="hud-provider-header">
+                                            <div class="hud-provider-badge agy-tag">
+                                                <span class="provider-dot"></span>
+                                                <span>Google Antigravity</span>
+                                            </div>
+                                            <span class="hud-status-badge" :class="{ active: aiQuotaData?.antigravity?.connected }">
+                                                {{ aiQuotaData?.antigravity?.connected ? (aiQuotaData.antigravity.plan_type || t('active')) : t('notDetected') }}
+                                            </span>
+                                        </div>
+                                        <div v-if="aiQuotaData?.antigravity?.five_hour" class="hud-quota-row">
+                                            <div class="quota-row-label">
+                                                <span>Gemini / Primary</span>
+                                                <span v-if="aiQuotaData.antigravity.five_hour.reset_time_desc" class="quota-reset-hint">{{ aiQuotaData.antigravity.five_hour.reset_time_desc }}</span>
+                                            </div>
+                                            <div class="quota-progress-track">
+                                                <div class="quota-progress-fill" :style="{ width: `${antigravityPrimaryRemaining ?? 100}%`, backgroundColor: getQuotaColor(antigravityPrimaryRemaining ?? 100) }"></div>
+                                            </div>
+                                            <div class="quota-row-value">
+                                                <span :style="{ color: getQuotaColor(antigravityPrimaryRemaining ?? 100) }">{{ antigravityPrimaryRemaining ?? 100 }}%</span>
+                                                <span class="quota-unit">{{ t('remaining') }}</span>
+                                            </div>
+                                        </div>
+                                        <div v-if="aiQuotaData?.antigravity?.secondary_quota" class="hud-quota-row secondary-row">
+                                            <div class="quota-row-label">
+                                                <span>{{ aiQuotaData.antigravity.secondary_label || 'Claude / Sonnet' }}</span>
+                                                <span v-if="aiQuotaData.antigravity.secondary_quota.reset_time_desc" class="quota-reset-hint">{{ aiQuotaData.antigravity.secondary_quota.reset_time_desc }}</span>
+                                            </div>
+                                            <div class="quota-progress-track">
+                                                <div class="quota-progress-fill" :style="{ width: `${antigravitySecondaryRemaining ?? 100}%`, backgroundColor: getQuotaColor(antigravitySecondaryRemaining ?? 100) }"></div>
+                                            </div>
+                                            <div class="quota-row-value">
+                                                <span :style="{ color: getQuotaColor(antigravitySecondaryRemaining ?? 100) }">{{ antigravitySecondaryRemaining ?? 100 }}%</span>
+                                                <span class="quota-unit">{{ t('remaining') }}</span>
+                                            </div>
+                                        </div>
+                                        <div v-if="aiQuotaData?.antigravity?.error_message" class="hud-error-msg">
+                                            {{ aiQuotaData.antigravity.error_message }}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </transition>
+                    </div>
+
                         <div v-else-if="displayMusic" class="music-ctl-box" :class="{ 'expanded': isMusicExpanded }"
                             :key="'music_' + musicBoxKey" @click="expandMusic" style="cursor: pointer;">
                             <div class="music-top-row">
@@ -911,7 +1082,7 @@ const nsdLyricDelay = ref(Number(localStorage.getItem('nsd_lyric_delay')) || 0);
 const WS_LYRIC_DELAY_MS = 500;
 
 // 1. 判定当前是否处于大窗口状态
-const isExpandedSize = computed(() => isMusicExpanded.value || isMsgActive.value || displayActivity.value);
+const isExpandedSize = computed(() => isMusicExpanded.value || isMsgActive.value || displayActivity.value || isAiQuotaHovered.value);
 
 // 2. 外层容器：状态一变，立马切成目标圆角
 const islandStyle = computed<CSSProperties>(() => {
@@ -1759,22 +1930,146 @@ const enableSysResource = ref(localStorage.getItem('nsd_sys_resource') === 'true
 const cpuUsage = ref(0);
 const ramUsage = ref(0);
 
+// ==================== AI Quota Monitor ====================
+interface QuotaWindow {
+    percent_remaining: number;
+    reset_time_desc?: string | null;
+    reset_timestamp?: number | null;
+}
+
+interface ProviderQuota {
+    provider: string; // "codex" | "antigravity"
+    connected: boolean;
+    error_message?: string | null;
+    account_email?: string | null;
+    plan_type?: string | null;
+    five_hour?: QuotaWindow | null;
+    weekly?: QuotaWindow | null;
+    secondary_quota?: QuotaWindow | null;
+    secondary_label?: string | null;
+    last_updated_unix: number;
+}
+
+interface AiQuotaPayload {
+    codex?: ProviderQuota | null;
+    antigravity?: ProviderQuota | null;
+    active_window_is_ide: boolean;
+    active_app_name?: string | null;
+    timestamp: number;
+}
+
+const enableAiQuota = ref(localStorage.getItem('nsd_ai_quota_enabled') !== 'false');
+const enableCodexQuota = ref(localStorage.getItem('nsd_ai_quota_codex') !== 'false');
+const enableAntigravityQuota = ref(localStorage.getItem('nsd_ai_quota_antigravity') !== 'false');
+const quotaDisplayMode = ref<'auto' | 'always'>((localStorage.getItem('nsd_ai_quota_mode') as 'auto' | 'always') || 'auto');
+const aiQuotaData = ref<AiQuotaPayload | null>(null);
+const isAiQuotaHovered = ref(false);
+const isRefreshingAiQuota = ref(false);
+let unlistenAiQuota: (() => void) | null = null;
+let unlistenAiQuotaSettings: (() => void) | null = null;
+
+const codex5hRemaining = computed(() => {
+    const fh = aiQuotaData.value?.codex?.five_hour;
+    if (!fh) return null;
+    return Math.max(0, Math.min(100, Math.round(fh.percent_remaining)));
+});
+
+const codexWeeklyRemaining = computed(() => {
+    const wk = aiQuotaData.value?.codex?.weekly;
+    if (!wk) return null;
+    return Math.max(0, Math.min(100, Math.round(wk.percent_remaining)));
+});
+
+const antigravityPrimaryRemaining = computed(() => {
+    const fh = aiQuotaData.value?.antigravity?.five_hour;
+    if (!fh) return null;
+    return Math.max(0, Math.min(100, Math.round(fh.percent_remaining)));
+});
+
+const antigravitySecondaryRemaining = computed(() => {
+    const sq = aiQuotaData.value?.antigravity?.secondary_quota;
+    if (!sq) return null;
+    return Math.max(0, Math.min(100, Math.round(sq.percent_remaining)));
+});
+
+const displayAiQuota = computed(() => {
+    if (!enableAiQuota.value || isMsgActive.value || displaySysToast.value || displayActivity.value || displayClipboard.value) {
+        return false;
+    }
+    if (!enableCodexQuota.value && !enableAntigravityQuota.value) {
+        return false;
+    }
+    if (quotaDisplayMode.value === 'always') {
+        return true;
+    }
+    if (quotaDisplayMode.value === 'auto') {
+        return !!aiQuotaData.value?.active_window_is_ide;
+    }
+    return false;
+});
+
+
+const getQuotaColor = (percentRemaining: number) => {
+    if (percentRemaining >= 50) return '#10b981';
+    if (percentRemaining >= 20) return '#f59e0b';
+    return '#ef4444';
+};
+
+const handleRefreshAiQuota = async () => {
+    if (isRefreshingAiQuota.value) return;
+    isRefreshingAiQuota.value = true;
+    try {
+        const payload = await invoke<AiQuotaPayload>('refresh_ai_quota');
+        aiQuotaData.value = payload;
+    } catch (e) {
+        console.error('Refresh AI quota error:', e);
+    } finally {
+        setTimeout(() => {
+            isRefreshingAiQuota.value = false;
+        }, 600);
+    }
+};
+
+let aiQuotaHoverTimer: number | null = null;
+
+const handleAiQuotaMouseEnter = () => {
+    if (!displayAiQuota.value) return;
+    if (aiQuotaHoverTimer) {
+        clearTimeout(aiQuotaHoverTimer);
+        aiQuotaHoverTimer = null;
+    }
+    aiQuotaHoverTimer = window.setTimeout(() => {
+        isAiQuotaHovered.value = true;
+    }, 100);
+};
+
+const handleAiQuotaMouseLeave = () => {
+    if (!displayAiQuota.value) return;
+    if (aiQuotaHoverTimer) {
+        clearTimeout(aiQuotaHoverTimer);
+        aiQuotaHoverTimer = null;
+    }
+    aiQuotaHoverTimer = window.setTimeout(() => {
+        isAiQuotaHovered.value = false;
+    }, 150);
+};
+
 // 灵动岛自定义显示
 const enableCustomDisplay = ref(localStorage.getItem('nsd_custom_display') === 'true');
 const customSlots = ref<(string | null)[]>(JSON.parse(localStorage.getItem('nsd_custom_slots') || '[null, null, null]'));
 
 // 新增 FPS 判定
-const displayFps = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySysToast.value && enableFps.value);
+const displayFps = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySysToast.value && !displayAiQuota.value && enableFps.value);
 
 // 使用计算属性智能判断当前该显示谁
-const displayCustom = computed(() => !isMsgActive.value && !displaySysToast.value && enableCustomDisplay.value);
-const displayResource = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySysToast.value && enableSysResource.value && !enableFps.value && (!isMusicCtlEnabled.value || !isMediaActive.value));
-const displaySpeed = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySysToast.value && !enableSysResource.value && !enableFps.value && (!isMusicCtlEnabled.value || !isMediaActive.value));
-const displayMusic = computed(() => !isMsgActive.value && !displaySysToast.value && isMusicCtlEnabled.value && isMediaActive.value && !enableCustomDisplay.value);
+const displayCustom = computed(() => !isMsgActive.value && !displaySysToast.value && !displayAiQuota.value && enableCustomDisplay.value);
+const displayResource = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySysToast.value && !displayAiQuota.value && enableSysResource.value && !enableFps.value && (!isMusicCtlEnabled.value || !isMediaActive.value));
+const displaySpeed = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySysToast.value && !displayAiQuota.value && !enableSysResource.value && !enableFps.value && (!isMusicCtlEnabled.value || !isMediaActive.value));
+const displayMusic = computed(() => !isMsgActive.value && !displaySysToast.value && !displayAiQuota.value && isMusicCtlEnabled.value && isMediaActive.value && !enableCustomDisplay.value);
 
-// 智能判断静默模式下是否该显示：有消息、有系统提示、剪贴板链接通知，或开启了音乐控制且正在播放
+// 智能判断静默模式下是否该显示：有消息、有系统提示、剪贴板链接通知，或开启了音乐控制且正在播放，或开启了AI Quota且活跃
 const shouldShowInQuietMode = computed(() =>
-    isMsgActive.value || displayActivity.value || displaySysToast.value || displayClipboard.value || (isMusicCtlEnabled.value && isMediaActive.value)
+    isMsgActive.value || displayActivity.value || displaySysToast.value || displayClipboard.value || (isMusicCtlEnabled.value && isMediaActive.value) || (enableAiQuota.value && (quotaDisplayMode.value === 'always' || !!aiQuotaData.value?.active_window_is_ide))
 );
 watch(shouldShowInQuietMode, async (newVal) => {
     if (isMsgModeEnabled.value) {
@@ -1809,6 +2104,15 @@ const showCoverglassBg = computed(() => {
 
 // 辅助函数：获取当前状态应该拥有的默认大小
 const getBaseSize = () => {
+    if (displayAiQuota.value) {
+        if (isAiQuotaHovered.value) {
+            const hasCodex = enableCodexQuota.value && aiQuotaData.value?.codex;
+            const hasAntigravity = enableAntigravityQuota.value && aiQuotaData.value?.antigravity;
+            const isDual = hasCodex && hasAntigravity;
+            return { w: 320, h: isDual ? 130 : 90 };
+        }
+        return { w: nsdBaseWidth.value, h: nsdBaseHeight.value };
+    }
     if (displayFps.value) return { w: nsdBaseWidth.value, h: nsdBaseHeight.value };
     if (displayCustom.value || displayResource.value) return { w: nsdMusicBaseWidth.value, h: Math.max(nsdBaseHeight.value + 8, 42) };
     if (displaySpeed.value) return { w: nsdBaseWidth.value, h: nsdBaseHeight.value };
@@ -1816,7 +2120,7 @@ const getBaseSize = () => {
 };
 
 // 监听内容切换，触发丝滑动画过渡
-watch([displaySpeed, displayMusic, displayResource, displayFps], () => {
+watch([displaySpeed, displayMusic, displayResource, displayFps, displayAiQuota, isAiQuotaHovered], () => {
     // 仅在未被临时弹窗（消息、活动、音乐展开）占用时，才执行基础大小切换
     if (!isMsgActive.value && !displayActivity.value && !displaySysToast.value && !isMusicExpanded.value && !isMusicExpanding.value) {
         const { w, h } = getBaseSize();
@@ -2682,7 +2986,7 @@ const handleMouseDown = (event: MouseEvent) => {
 const handleMouseMove = async (event: MouseEvent) => {
     if (!isMouseDown) return;
     if (isSizeAnimating) return;
-    if (isMusicExpanded.value || isMusicExpanding.value || isMsgActive.value || displaySysToast.value) {
+    if (isMusicExpanded.value || isMusicExpanding.value || isMsgActive.value || displaySysToast.value || isAiQuotaHovered.value) {
         isMouseDown = false;
         return;
     }
@@ -2713,7 +3017,7 @@ const handleRightClick = async (event: MouseEvent) => {
     event.stopPropagation(); // 阻止冒泡
 
     // 如果音乐灵动岛正在展开或已完全展开，强制禁止呼出右键菜单
-    if (isMusicExpanded.value || isMusicExpanding.value || isMsgActive.value || displaySysToast.value) {
+    if (isMusicExpanded.value || isMusicExpanding.value || isMsgActive.value || displaySysToast.value || isAiQuotaHovered.value) {
         return;
     }
 
@@ -2968,18 +3272,24 @@ const expandMusic = (e: MouseEvent) => {
     }, 120);
 };
 
-// 鼠标离开灵动岛时：收缩音乐岛
+// 鼠标离开灵动岛时：收缩音乐岛或AI Quota
 const handleMouseLeave = () => {
+    if (displayAiQuota.value) {
+        handleAiQuotaMouseLeave();
+    }
     if (!isMusicExpanded.value && !isMusicExpanding.value) return;
 
     // 直接呼叫收缩；若动画锁着，collapseMusic 会记录待办稍后执行
     collapseMusic();
 };
 
-// 鼠标重新移入灵动岛时：取消待执行的收缩
+// 鼠标重新移入灵动岛时：取消待执行的收缩，若AI Quota处于活跃态则展开
 const handleMouseEnter = () => {
     // 若之前移出留下了收缩待办，但动画未播完鼠标又回来，则取消该待办
     isPendingCollapse = false;
+    if (displayAiQuota.value) {
+        handleAiQuotaMouseEnter();
+    }
 };
 
 watch(displayMusic, (newVal: boolean) => {
@@ -3409,6 +3719,44 @@ onMounted(async () => {
         showToast(t('positionReset'), 'sys');
     });
 
+    // 监听 AI Quota 后端推送事件
+    unlistenAiQuota = await listen<AiQuotaPayload>('ai-quota-event', (event) => {
+        aiQuotaData.value = event.payload;
+    });
+
+    // 监听控制台发来的 AI Quota 配置同步指令
+    unlistenAiQuotaSettings = await listen<{
+        enabled: boolean;
+        show_codex: boolean;
+        show_antigravity: boolean;
+        display_mode: 'auto' | 'always';
+        refresh_interval_sec: number;
+    }>('control-ai-quota-settings', (event) => {
+        enableAiQuota.value = event.payload.enabled;
+        enableCodexQuota.value = event.payload.show_codex;
+        enableAntigravityQuota.value = event.payload.show_antigravity;
+        quotaDisplayMode.value = event.payload.display_mode;
+    });
+
+    // 初始化获取一次 AI Quota 初始设置与数据
+    try {
+        const [quotaSettings, initialQuota] = await Promise.all([
+            invoke<any>('get_ai_quota_settings'),
+            invoke<AiQuotaPayload>('get_ai_quota_data')
+        ]);
+        if (quotaSettings) {
+            enableAiQuota.value = quotaSettings.enabled;
+            enableCodexQuota.value = quotaSettings.show_codex;
+            enableAntigravityQuota.value = quotaSettings.show_antigravity;
+            quotaDisplayMode.value = quotaSettings.display_mode;
+        }
+        if (initialQuota) {
+            aiQuotaData.value = initialQuota;
+        }
+    } catch (e) {
+        console.error('Failed to load initial AI quota:', e);
+    }
+
     // 在你原有的每秒刷新定时器中，顺带执行音乐同步
     // 1. 高频定时器：专门负责网速和硬件监控（每 500ms ~ 1000ms 刷新一次）
     speedTimer = setInterval(async () => {
@@ -3617,6 +3965,18 @@ onUnmounted(() => {
     if (unlistenJustSolo) {
         unlistenJustSolo();
         unlistenJustSolo = null;
+    }
+    if (unlistenAiQuota) {
+        unlistenAiQuota();
+        unlistenAiQuota = null;
+    }
+    if (unlistenAiQuotaSettings) {
+        unlistenAiQuotaSettings();
+        unlistenAiQuotaSettings = null;
+    }
+    if (aiQuotaHoverTimer) {
+        clearTimeout(aiQuotaHoverTimer);
+        aiQuotaHoverTimer = null;
     }
     window.removeEventListener('blur', collapseMusic);
     clearInterval(speedTimer);
@@ -5070,6 +5430,388 @@ onUnmounted(() => {
 
     100% {
         clip-path: inset(0 0 0 0);
+    }
+}
+
+/* ==================== AI Quota Box Styles ==================== */
+.ai-quota-box {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    box-sizing: border-box;
+    overflow: hidden;
+    transition: width 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                height 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                border-radius 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                padding 200ms ease,
+                background 180ms ease,
+                box-shadow 180ms ease;
+}
+
+/* Morph transition between Compact Capsule & Expanded HUD */
+.quota-morph-enter-active {
+    transition: opacity 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.quota-morph-leave-active {
+    transition: opacity 120ms ease,
+                transform 120ms ease;
+}
+
+.quota-morph-enter-from {
+    opacity: 0;
+    transform: scale(0.98) translateY(3px);
+}
+
+.quota-morph-leave-to {
+    opacity: 0;
+    transform: scale(0.97);
+}
+
+/* Compact Capsule Mode */
+.ai-quota-compact {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    height: 100%;
+    padding: 0 4px;
+}
+
+/* Solo Codex 2-Row Layout */
+.solo-codex {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2.5px;
+    width: 100%;
+    height: 100%;
+    padding: 1px 4px;
+    cursor: pointer;
+}
+
+.solo-codex-row {
+    display: grid;
+    grid-template-columns: 18px 34px minmax(50px, 1fr);
+    align-items: center;
+    gap: 6px;
+    line-height: 1;
+}
+
+.solo-quota-label {
+    font-size: 10px;
+    font-weight: 500;
+    opacity: 0.55;
+    letter-spacing: -0.2px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.solo-quota-value {
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.3px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    text-align: right;
+}
+
+.solo-progress {
+    width: 100%;
+    height: 2px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+}
+
+.solo-progress-fill {
+    height: 100%;
+    border-radius: 999px;
+    opacity: 0.88;
+    transition: width 0.4s ease, background-color 0.4s ease;
+}
+
+.quota-pill {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    color: currentColor;
+    cursor: pointer;
+}
+
+.codex-brand {
+    color: #10a37f;
+}
+
+.agy-brand {
+    color: #6366f1;
+}
+
+.quota-brand-name {
+    font-size: 11px;
+    font-weight: 700;
+    opacity: 0.85;
+    letter-spacing: -0.2px;
+}
+
+.quota-percent {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 11.5px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.3px;
+}
+
+.quota-divider {
+    width: 1px;
+    height: 12px;
+    background: rgba(150, 150, 150, 0.3);
+    flex-shrink: 0;
+}
+
+.quota-divider-slash {
+    opacity: 0.35;
+    font-size: 11px;
+    font-weight: 400;
+    margin: 0 1px;
+}
+
+.quota-sub-label {
+    font-size: 10px;
+    opacity: 0.75;
+    font-weight: 600;
+    margin-right: -1px;
+}
+
+.waiting-pill {
+    opacity: 0.6;
+}
+
+/* Expanded HUD Popover Card */
+.ai-quota-expanded {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    padding: 8px 10px;
+    box-sizing: border-box;
+    justify-content: flex-start;
+    gap: 6px;
+}
+
+.hud-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    flex-shrink: 0;
+}
+
+.hud-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.hud-header-icon {
+    width: 13px;
+    height: 13px;
+    color: #3b82f6;
+}
+
+.hud-title {
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: -0.2px;
+    color: currentColor;
+    opacity: 0.95;
+}
+
+.hud-refresh-btn {
+    background: rgba(150, 150, 150, 0.15);
+    border: 1px solid rgba(150, 150, 150, 0.2);
+    border-radius: 5px;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: currentColor;
+    opacity: 0.8;
+    transition: all 0.2s ease;
+    padding: 0;
+}
+
+.hud-refresh-btn svg {
+    width: 11px;
+    height: 11px;
+}
+
+.hud-refresh-btn:hover {
+    opacity: 1;
+    background: rgba(150, 150, 150, 0.25);
+}
+
+.hud-refresh-btn.is-spinning svg {
+    animation: spin 0.8s linear infinite;
+}
+
+.hud-cards-container {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    width: 100%;
+    overflow-y: auto;
+    scrollbar-width: none;
+}
+
+.hud-cards-container::-webkit-scrollbar {
+    display: none;
+}
+
+.hud-provider-section {
+    background: rgba(150, 150, 150, 0.08);
+    border: 1px solid rgba(150, 150, 150, 0.12);
+    border-radius: 7px;
+    padding: 5px 7px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.hud-provider-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.hud-provider-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: currentColor;
+    opacity: 0.9;
+}
+
+.provider-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.codex-tag .provider-dot {
+    background: #10a37f;
+    box-shadow: 0 0 5px rgba(16, 163, 127, 0.6);
+}
+
+.agy-tag .provider-dot {
+    background: #6366f1;
+    box-shadow: 0 0 5px rgba(99, 102, 241, 0.6);
+}
+
+.hud-plan-badge {
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(16, 163, 127, 0.18);
+    color: #10b981;
+    font-weight: 600;
+}
+
+.hud-status-badge {
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(150, 150, 150, 0.15);
+    color: currentColor;
+    opacity: 0.7;
+}
+
+.hud-status-badge.active {
+    background: rgba(99, 102, 241, 0.2);
+    color: #818cf8;
+    opacity: 1;
+}
+
+.hud-quota-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 1px;
+}
+
+.quota-row-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 9.5px;
+    color: currentColor;
+    opacity: 0.75;
+    font-weight: 500;
+}
+
+.quota-reset-hint {
+    font-size: 9px;
+    opacity: 0.6;
+    font-family: ui-monospace, monospace;
+}
+
+.quota-progress-track {
+    width: 100%;
+    height: 3.5px;
+    background: rgba(150, 150, 150, 0.2);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+}
+
+.quota-progress-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.4s ease, background-color 0.4s ease;
+}
+
+.quota-row-value {
+    display: flex;
+    justify-content: flex-end;
+    align-items: baseline;
+    gap: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    font-family: ui-monospace, monospace;
+}
+
+.quota-unit {
+    font-size: 8.5px;
+    font-weight: normal;
+    opacity: 0.5;
+    color: currentColor;
+}
+
+.hud-error-msg {
+    font-size: 9px;
+    color: #ef4444;
+    line-height: 1.2;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
     }
 }
 </style>

@@ -1,4 +1,5 @@
 mod activity_pool;
+mod ai_quota;
 mod audio_spectrum;
 mod music_controller;
 mod notification;
@@ -814,8 +815,15 @@ pub fn run() {
             sync_tray_menu,
             get_clipboard_text,
             get_active_browser_tabs,
+            ai_quota::get_ai_quota_data,
+            ai_quota::refresh_ai_quota,
+            ai_quota::get_ai_quota_settings,
+            ai_quota::save_ai_quota_settings,
         ])
         .setup(|app| {
+            // AI Quota 监控（Codex & Antigravity）
+            ai_quota::start_ai_quota_monitor(app.handle().clone());
+
             // 活动池：47300 HTTP 入站 + 30Hz 节流推送（需尽早启动，供外部随时调用）
             activity_pool::start(app.handle().clone());
 
