@@ -82,10 +82,26 @@ impl Default for CodexStateTracker {
     }
 }
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static FORCE_REFRESH_REQUESTED: AtomicBool = AtomicBool::new(false);
+static QUOTA_REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Cho phép các module khác (như agy_detector / codex_detector) yêu cầu cập nhật Quota % ngay tức thì
+pub fn request_immediate_quota_refresh() {
+    FORCE_REFRESH_REQUESTED.store(true, Ordering::Relaxed);
+}
+
+#[derive(Debug, Clone, Default)]
+struct AgyStateTracker {
+    last_valid_quota: Option<ProviderQuota>,
+}
+
 lazy_static::lazy_static! {
     static ref GLOBAL_AI_SETTINGS: Mutex<AiQuotaSettings> = Mutex::new(AiQuotaSettings::default());
     static ref LATEST_PAYLOAD: Mutex<Option<AiQuotaPayload>> = Mutex::new(None);
     static ref CODEX_TRACKER: Mutex<CodexStateTracker> = Mutex::new(CodexStateTracker::default());
+    static ref AGY_TRACKER: Mutex<AgyStateTracker> = Mutex::new(AgyStateTracker::default());
 }
 
 /// Tính thời gian retry lũy tiến (5s -> 10s -> 20s -> 40s -> 80s -> tối đa 120s)
@@ -461,7 +477,7 @@ async fn fetch_antigravity_via_cli() -> Option<ProviderQuota> {
         cmd.creation_flags(0x08000000 | 0x00000200);
     }
 
-    let output = match tokio::time::timeout(Duration::from_secs(8), cmd.output()).await {
+    let output = match tokio::time::timeout(Duration::from_secs(12), cmd.output()).await {
         Ok(Ok(out)) if out.status.success() => out,
         _ => return None,
     };
@@ -579,6 +595,9 @@ fn find_antigravity_language_server(sys: &mut System) -> Option<(u16, Option<Str
 async fn fetch_antigravity_quota(sys: &mut System) -> ProviderQuota {
     // 1. Thử lấy qua CLI `agy -p "/usage" --output-format json` trước
     if let Some(quota) = fetch_antigravity_via_cli().await {
+        if let Ok(mut tracker) = AGY_TRACKER.lock() {
+            tracker.last_valid_quota = Some(quota.clone());
+        }
         return quota;
     }
 
@@ -633,7 +652,7 @@ async fn fetch_antigravity_quota(sys: &mut System) -> ProviderQuota {
                         });
                     }
 
-                    return ProviderQuota {
+                    let quota = ProviderQuota {
                         provider: "antigravity".to_string(),
                         connected: true,
                         is_fallback: Some(false),
@@ -652,8 +671,21 @@ async fn fetch_antigravity_quota(sys: &mut System) -> ProviderQuota {
                         secondary_label: Some("Claude / Sonnet".to_string()),
                         last_updated_unix: now,
                     };
+
+                    if let Ok(mut tracker) = AGY_TRACKER.lock() {
+                        tracker.last_valid_quota = Some(quota.clone());
+                    }
+                    return quota;
                 }
             }
+        }
+    }
+
+    // 3. Nếu fetch thất bại (ví dụ CLI bận khi AGY đang chạy), sử dụng lại Quota hợp lệ đã cache trước đó
+    if let Ok(tracker) = AGY_TRACKER.lock() {
+        if let Some(mut cached) = tracker.last_valid_quota.clone() {
+            cached.last_updated_unix = now;
+            return cached;
         }
     }
 
@@ -866,6 +898,20 @@ pub async fn fetch_all_quota_data() -> AiQuotaPayload {
     payload
 }
 
+async fn refresh_quota_data() -> Result<AiQuotaPayload, String> {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let _refresh_guard = QUOTA_REFRESH_LOCK.lock().await;
+        fetch_all_quota_data().await
+    })
+        .await
+        .map_err(|_| "Quota refresh timed out after 15 seconds".to_string())
+}
+
+// Return owned data so an if-let caller never keeps the cache mutex locked.
+fn quota_snapshot(cache: &Mutex<Option<AiQuotaPayload>>) -> Option<AiQuotaPayload> {
+    cache.lock().unwrap().clone()
+}
+
 /// Khởi chạy Background Monitor cho AI Quota
 pub fn start_ai_quota_monitor(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
@@ -873,6 +919,7 @@ pub fn start_ai_quota_monitor(app: AppHandle) {
         let mut was_ide_active = false;
         let mut was_ide_open = false;
         let mut was_codex_active = false;
+        let mut was_agy_active = false;
 
         loop {
             tokio::time::sleep(Duration::from_millis(800)).await;
@@ -889,32 +936,55 @@ pub fn start_ai_quota_monitor(app: AppHandle) {
             } else {
                 false
             };
+            let is_agy_active = if settings.show_antigravity {
+                crate::agy_detector::is_agy_active()
+            } else {
+                false
+            };
 
             let is_match = is_ide || is_open;
             let interval = Duration::from_secs(settings.refresh_interval_sec.max(15));
             let codex_retry_due = settings.show_codex && should_retry_codex();
-            let should_poll = codex_retry_due
+            let force_refresh = FORCE_REFRESH_REQUESTED.swap(false, Ordering::Relaxed);
+            let should_poll = force_refresh
+                || codex_retry_due
                 || last_poll.elapsed() >= interval
                 || (is_match && (!was_ide_active && !was_ide_open));
 
             let codex_active_changed = is_codex_active != was_codex_active;
+            let agy_active_changed = is_agy_active != was_agy_active;
             let window_state_changed = is_ide != was_ide_active || is_open != was_ide_open;
 
             if should_poll {
                 last_poll = Instant::now();
-                let mut payload = fetch_all_quota_data().await;
+                let mut payload = match refresh_quota_data().await {
+                    Ok(payload) => payload,
+                    Err(_) => {
+                        was_ide_active = is_ide;
+                        was_ide_open = is_open;
+                        was_codex_active = is_codex_active;
+                        was_agy_active = is_agy_active;
+                        continue;
+                    }
+                };
                 if let Some(ref mut c) = payload.codex {
                     c.is_active = Some(is_codex_active);
                 }
+                if let Some(ref mut a) = payload.antigravity {
+                    a.is_active = Some(is_agy_active);
+                }
                 let _ = app.emit("ai-quota-event", payload);
-            } else if window_state_changed || codex_active_changed {
-                // Cập nhật trạng thái active/open window hoặc trạng thái Codex working mà không cần fetch lại toàn bộ HTTP
-                if let Some(mut cached) = LATEST_PAYLOAD.lock().unwrap().clone() {
+            } else if window_state_changed || codex_active_changed || agy_active_changed {
+                // Cập nhật trạng thái active/open window hoặc trạng thái Codex / AGY working mà không cần fetch lại toàn bộ HTTP
+                if let Some(mut cached) = quota_snapshot(&LATEST_PAYLOAD) {
                     cached.active_window_is_ide = is_ide;
                     cached.ide_is_open = is_open;
                     cached.active_app_name = app_name.or(open_app_name);
                     if let Some(ref mut c) = cached.codex {
                         c.is_active = Some(is_codex_active);
+                    }
+                    if let Some(ref mut a) = cached.antigravity {
+                        a.is_active = Some(is_agy_active);
                     }
                     let _ = app.emit("ai-quota-event", cached.clone());
                     *LATEST_PAYLOAD.lock().unwrap() = Some(cached);
@@ -924,6 +994,7 @@ pub fn start_ai_quota_monitor(app: AppHandle) {
             was_ide_active = is_ide;
             was_ide_open = is_open;
             was_codex_active = is_codex_active;
+            was_agy_active = is_agy_active;
         }
     });
 }
@@ -946,7 +1017,7 @@ pub async fn get_ai_quota_data() -> Result<AiQuotaPayload, String> {
 
 #[tauri::command]
 pub async fn refresh_ai_quota(app: AppHandle) -> Result<AiQuotaPayload, String> {
-    let payload = fetch_all_quota_data().await;
+    let payload = refresh_quota_data().await?;
     let _ = app.emit("ai-quota-event", payload.clone());
     Ok(payload)
 }
@@ -966,6 +1037,32 @@ pub fn save_ai_quota_settings(settings: AiQuotaSettings) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quota_snapshot_releases_lock_before_cache_update() {
+        let cache = Mutex::new(Some(AiQuotaPayload {
+            codex: None,
+            antigravity: None,
+            active_window_is_ide: false,
+            ide_is_open: false,
+            active_app_name: None,
+            timestamp: 0,
+        }));
+        if let Some(mut snapshot) = quota_snapshot(&cache) {
+            snapshot.ide_is_open = true;
+            *cache.try_lock().expect("snapshot must release cache lock") = Some(snapshot);
+        }
+        assert!(cache.lock().unwrap().as_ref().unwrap().ide_is_open);
+    }
+
+    #[tokio::test]
+    async fn quota_refresh_times_out_while_waiting_for_lock() {
+        let _held = QUOTA_REFRESH_LOCK.lock().await;
+        let result = tokio::time::timeout(Duration::from_secs(18), refresh_quota_data())
+            .await
+            .expect("refresh must bound lock waiting too");
+        assert!(result.unwrap_err().contains("timed out"));
+    }
 
     #[tokio::test]
     async fn test_fetch_antigravity() {
@@ -1009,5 +1106,3 @@ mod tests {
         }
     }
 }
-
-

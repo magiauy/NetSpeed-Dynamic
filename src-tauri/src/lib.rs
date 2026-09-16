@@ -1,4 +1,5 @@
 mod activity_pool;
+mod agy_detector;
 mod ai_quota;
 mod audio_spectrum;
 mod codex_detector;
@@ -674,6 +675,11 @@ fn get_codex_activity() -> codex_detector::CodexActivityPayload {
     codex_detector::get_current_activity()
 }
 
+#[tauri::command]
+fn get_agy_activity() -> agy_detector::AgyActivityPayload {
+    agy_detector::get_current_activity()
+}
+
 
 // 缓存 AppHandle 供剪贴板监听线程的窗口过程使用
 #[cfg(target_os = "windows")]
@@ -820,10 +826,14 @@ pub fn run() {
             ai_quota::get_ai_quota_settings,
             ai_quota::save_ai_quota_settings,
             get_codex_activity,
+            get_agy_activity,
         ])
         .setup(|app| {
             // Codex 语义活动状态实时检测器 (JSONL Tailer)
             codex_detector::start_codex_detector(app.handle().clone());
+
+            // Antigravity 语义活动状态实时检测器 (Transcript & Presence Tailer)
+            agy_detector::start_agy_detector(app.handle().clone());
 
             // AI Quota 监控（Codex & Antigravity）
             ai_quota::start_ai_quota_monitor(app.handle().clone());

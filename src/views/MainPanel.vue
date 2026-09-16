@@ -545,7 +545,7 @@
                                         <span class="set-item-desc" :title="quotaCodexSummary || 'Chưa kết nối'">{{ quotaCodexSummary || 'Chưa kết nối' }}</span>
                                     </div>
                                     <label class="switch">
-                                        <input type="checkbox" v-model="enableCodexQuota" :disabled="!enableAiQuota" @change="handleAiQuotaSettingChange">
+                                        <input type="checkbox" v-model="enableCodexQuota" :disabled="!enableAiQuota" @change="handleAiQuotaSettingChange('codex')">
                                         <span class="slider"></span>
                                     </label>
                                 </div>
@@ -561,7 +561,7 @@
                                         <span class="set-item-desc" :title="quotaAntigravitySummary || 'Chưa kết nối'">{{ quotaAntigravitySummary || 'Chưa kết nối' }}</span>
                                     </div>
                                     <label class="switch">
-                                        <input type="checkbox" v-model="enableAntigravityQuota" :disabled="!enableAiQuota" @change="handleAiQuotaSettingChange">
+                                        <input type="checkbox" v-model="enableAntigravityQuota" :disabled="!enableAiQuota" @change="handleAiQuotaSettingChange('antigravity')">
                                         <span class="slider"></span>
                                     </label>
                                 </div>
@@ -625,9 +625,9 @@
                                         <span class="set-item-title">{{ t('refreshQuotaNow') }}</span>
                                         <span class="set-item-desc">{{ lastQuotaRefreshTime || 'Live Sync' }}</span>
                                     </div>
-                                    <button class="stats-toggle-btn" :disabled="!enableAiQuota || isRefreshingQuota" @click="handleRefreshQuotaNow">
-                                        <span v-if="isRefreshingQuota">...</span>
-                                        <span v-else>🔄 {{ t('refresh') }}</span>
+                                    <button class="stats-toggle-btn quota-refresh-btn" :class="{ 'is-refreshing': isRefreshingQuota }" :disabled="!enableAiQuota || isRefreshingQuota" @click="handleRefreshQuotaNow" :title="t('refresh')">
+                                        <RefreshCw class="quota-refresh-icon" :size="14" aria-hidden="true" />
+                                        <span>{{ t('refresh') }}</span>
                                     </button>
                                 </div>
                             </div>
@@ -697,6 +697,7 @@ import * as echarts from 'echarts';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { RefreshCw } from 'lucide-vue-next';
 import DynamicSet from '../components/DynamicSet.vue';
 import { t, currentLanguage, setLanguage, languageOptions, type AppLanguage } from '../i18n';
 
@@ -812,7 +813,7 @@ const selectQuotaInterval = (sec: number) => {
     handleAiQuotaSettingChange();
 };
 
-const handleAiQuotaSettingChange = async () => {
+const handleAiQuotaSettingChange = async (changedProvider?: 'codex' | 'antigravity' | Event) => {
     localStorage.setItem('nsd_ai_quota_enabled', String(enableAiQuota.value));
     localStorage.setItem('nsd_ai_quota_codex', String(enableCodexQuota.value));
     localStorage.setItem('nsd_ai_quota_antigravity', String(enableAntigravityQuota.value));
@@ -830,6 +831,10 @@ const handleAiQuotaSettingChange = async () => {
     try {
         await invoke('save_ai_quota_settings', { settings });
         await emit('control-ai-quota-settings', settings);
+        const provider = changedProvider === 'codex' || changedProvider === 'antigravity' ? changedProvider : undefined;
+        if (provider && enableAiQuota.value && (provider === 'codex' ? enableCodexQuota.value : enableAntigravityQuota.value)) {
+            await handleRefreshQuotaNow();
+        }
     } catch (e) {
         console.error('Failed to save AI quota settings', e);
     }
@@ -1069,6 +1074,7 @@ const setTargetPlayer = async (player: string) => {
     localStorage.setItem('nsd_target_player', player); // 本地记忆化
     try {
         await invoke('set_target_player', { player }); // 秒发给 Rust 立即生效
+        await emit('control-target-player', { player }); // 同步通知灵动岛
     } catch (e) {
         console.error('切换平台失败', e);
     }
@@ -2010,7 +2016,7 @@ const closeWindow = async () => {
     --tag-dev-color: #64748b;
     --item-desc-color: #898f99df;
     --slider-bg: #d7dce2;
-    --slider-checked-bg: #b9b9b9;
+    --slider-checked-bg: #22c55e;
     --slider-disabled-bg: #e2e8f0;
     --range-bg: #e2e8f0;
     --range-thumb-bg: #ffffff;
@@ -2069,7 +2075,7 @@ const closeWindow = async () => {
     --tag-dev-color: #94a3b8;
     --item-desc-color: #898f99df;
     --slider-bg: #3e4247;
-    --slider-checked-bg: #5d646d;
+    --slider-checked-bg: #22c55e;
     --slider-disabled-bg: #334155;
     --range-bg: #42474e;
     --range-thumb-bg: #1e293b;
@@ -2797,6 +2803,37 @@ input:checked+.slider:before {
 
 .stats-toggle-btn:hover {
     background: var(--btn-sec-bg);
+}
+
+.quota-refresh-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-width: 76px;
+}
+
+.quota-refresh-btn:active:not(:disabled) {
+    transform: scale(0.96);
+}
+
+.quota-refresh-btn:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+
+.quota-refresh-icon {
+    flex: 0 0 auto;
+}
+
+.quota-refresh-btn.is-refreshing .quota-refresh-icon {
+    animation: quota-refresh-spin 0.8s linear infinite;
+}
+
+@keyframes quota-refresh-spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .stats-card {

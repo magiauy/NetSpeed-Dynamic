@@ -168,10 +168,11 @@
                                 <div v-if="!isAiQuotaHovered" class="ai-quota-compact" key="compact">
                                     <!-- Solo Codex Mode: 2 rows with 5h & 1w progress -->
                                     <template v-if="enableCodexQuota && !enableAntigravityQuota">
-                                        <div class="solo-codex" :class="{ 'is-active': isCodexActive }" :title="`Codex: 5h: ${codex5hRemaining ?? '--'}%, 1w: ${codexWeeklyRemaining ?? '--'}%${isCodexActive ? ' (✦ Active)' : ''}`">
+                                        <div class="solo-codex" :class="{ 'is-active': isCodexActive }" :title="`Codex: 5h: ${codex5hRemaining ?? '--'}%, 1w: ${codexWeeklyRemaining ?? '--'}%${isCodexActive ? ' (✦ ' + (codexStatusText || 'Active') + ')' : ''}`">
                                             <div class="solo-codex-row">
                                                 <span class="solo-quota-label">5h</span>
                                                 <span class="solo-quota-value" :style="{ color: getQuotaColor(codex5hRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)) }">
+                                                    <span class="activity-pulse-dot cdx-pulse-dot" :class="{ 'is-visible': isCodexActive }"></span>
                                                     {{ codex5hRemaining != null ? `${codex5hRemaining}%` : (aiQuotaData?.codex?.connected ? '100%' : '--') }}
                                                 </span>
                                                 <div class="solo-progress">
@@ -190,30 +191,39 @@
                                         </div>
                                     </template>
 
-                                    <!-- Solo AGY Mode -->
+                                    <!-- Solo AGY Mode: 2 rows with 5h & 1w progress -->
                                     <template v-else-if="!enableCodexQuota && enableAntigravityQuota">
-                                        <div class="quota-pill agy-pill" :title="`AGY: ${antigravityPrimaryRemaining ?? '--'}%`">
-                                            <span class="quota-brand-name agy-brand">AGY:</span>
-                                            <span class="quota-percent" :style="{ color: getQuotaColor(antigravityPrimaryRemaining ?? 100) }">
-                                                {{ antigravityPrimaryRemaining != null ? `${antigravityPrimaryRemaining}%` : (aiQuotaData?.antigravity?.connected ? '100%' : 'OFF') }}
-                                            </span>
-                                            <template v-if="antigravitySecondaryRemaining != null">
-                                                <span class="quota-divider-slash">|</span>
-                                                <span class="quota-sub-label">Claude:</span>
-                                                <span class="quota-percent" :style="{ color: getQuotaColor(antigravitySecondaryRemaining ?? 100) }">
-                                                    {{ antigravitySecondaryRemaining }}%
+                                        <div class="solo-codex agy-mode" :class="{ 'is-active': isAgyActive }" :title="`AGY: 5h: ${antigravityPrimaryRemaining ?? '--'}%${isAgyActive ? ' (✦ ' + (agyStatusText || 'Active') + ')' : ''}`">
+                                            <div class="solo-codex-row">
+                                                <span class="solo-quota-label agy-brand">5h</span>
+                                                <span class="solo-quota-value" :style="{ color: getQuotaColor(antigravityPrimaryRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)) }">
+                                                    <span class="activity-pulse-dot agy-pulse-dot" :class="{ 'is-visible': isAgyActive }"></span>
+                                                    {{ antigravityPrimaryRemaining != null ? `${antigravityPrimaryRemaining}%` : (aiQuotaData?.antigravity?.connected ? '100%' : 'OFF') }}
                                                 </span>
-                                            </template>
+                                                <div class="solo-progress">
+                                                    <div class="solo-progress-fill" :class="{ 'is-active': isAgyActive }" :style="{ width: `${antigravityPrimaryRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)}%`, backgroundColor: getQuotaColor(antigravityPrimaryRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)) }"></div>
+                                                </div>
+                                            </div>
+                                            <div class="solo-codex-row">
+                                                <span class="solo-quota-label agy-brand">{{ antigravitySecondaryRemaining != null ? '3P' : '1w' }}</span>
+                                                <span class="solo-quota-value" :style="{ color: getQuotaColor(antigravitySecondaryRemaining ?? antigravityWeeklyRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)) }">
+                                                    {{ (antigravitySecondaryRemaining ?? antigravityWeeklyRemaining) != null ? `${antigravitySecondaryRemaining ?? antigravityWeeklyRemaining}%` : (aiQuotaData?.antigravity?.connected ? '100%' : '--') }}
+                                                </span>
+                                                <div class="solo-progress">
+                                                    <div class="solo-progress-fill" :class="{ 'is-active': isAgyActive }" :style="{ width: `${antigravitySecondaryRemaining ?? antigravityWeeklyRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)}%`, backgroundColor: getQuotaColor(antigravitySecondaryRemaining ?? antigravityWeeklyRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)) }"></div>
+                                                </div>
+                                            </div>
                                         </div>
                                     </template>
 
                                     <!-- Dual Mode: CDX (5h) on top, AGY (5h) on bottom with progress lines -->
                                     <template v-else>
-                                        <div class="solo-codex dual-mode" :class="{ 'is-active': isCodexActive }" :title="`Codex (CDX) 5h: ${codex5hRemaining ?? '--'}%${isCodexActive ? ' (✦ Active)' : ''} | Antigravity (AGY) 5h: ${antigravityPrimaryRemaining ?? '--'}%`">
+                                        <div class="solo-codex dual-mode" :class="{ 'is-active': isCodexActive || isAgyActive }" :title="`CDX 5h: ${codex5hRemaining ?? '--'}%${isCodexActive ? ' (✦ ' + (codexStatusText || 'Active') + ')' : ''} | AGY 5h: ${antigravityPrimaryRemaining ?? '--'}%${isAgyActive ? ' (✦ ' + (agyStatusText || 'Active') + ')' : ''}`">
                                             <!-- Row 1: CDX 5h -->
                                             <div class="solo-codex-row">
                                                 <span class="solo-quota-label cdx-brand">CDX</span>
                                                 <span class="solo-quota-value" :style="{ color: getQuotaColor(codex5hRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)) }">
+                                                    <span class="activity-pulse-dot cdx-pulse-dot" :class="{ 'is-visible': isCodexActive }"></span>
                                                     {{ codex5hRemaining != null ? `${codex5hRemaining}%` : (aiQuotaData?.codex?.connected ? '100%' : 'OFF') }}
                                                 </span>
                                                 <div class="solo-progress">
@@ -224,10 +234,11 @@
                                             <div class="solo-codex-row">
                                                 <span class="solo-quota-label agy-brand">AGY</span>
                                                 <span class="solo-quota-value" :style="{ color: getQuotaColor(antigravityPrimaryRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)) }">
+                                                    <span class="activity-pulse-dot agy-pulse-dot" :class="{ 'is-visible': isAgyActive }"></span>
                                                     {{ antigravityPrimaryRemaining != null ? `${antigravityPrimaryRemaining}%` : (aiQuotaData?.antigravity?.connected ? '100%' : 'OFF') }}
                                                 </span>
                                                 <div class="solo-progress">
-                                                    <div class="solo-progress-fill" :style="{ width: `${antigravityPrimaryRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)}%`, backgroundColor: getQuotaColor(antigravityPrimaryRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)) }"></div>
+                                                    <div class="solo-progress-fill" :class="{ 'is-active': isAgyActive }" :style="{ width: `${antigravityPrimaryRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)}%`, backgroundColor: getQuotaColor(antigravityPrimaryRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)) }"></div>
                                                 </div>
                                             </div>
                                         </div>
@@ -302,8 +313,9 @@
                                         <div v-if="enableAntigravityQuota" class="hud-provider-section">
                                             <div class="hud-provider-header">
                                                 <div class="hud-provider-badge agy-tag">
-                                                    <span class="provider-dot"></span>
+                                                    <span class="provider-dot" :class="{ 'is-pulsing': isAgyActive }"></span>
                                                     <span>Google Antigravity</span>
+                                                    <span v-if="agyStatusText" class="hud-active-badge agy-active-badge">{{ agyStatusText }}</span>
                                                 </div>
                                                 <span class="hud-status-badge" :class="{ active: aiQuotaData?.antigravity?.connected }">
                                                     {{ aiQuotaData?.antigravity?.connected ? 'ON' : 'OFF' }}
@@ -2081,6 +2093,17 @@ interface CodexActivityPayload {
     source: string;
 }
 
+interface AgyActivityPayload {
+    state: 'idle' | 'thinking' | 'executing' | 'waiting_approval' | 'completed' | 'failed';
+    conversation_id?: string | null;
+    step_index?: number | null;
+    active_tool?: string | null;
+    detail_message?: string | null;
+    since_unix_ms: number;
+    confidence: number;
+    source: string;
+}
+
 interface AiQuotaPayload {
     codex?: ProviderQuota | null;
     antigravity?: ProviderQuota | null;
@@ -2096,17 +2119,26 @@ const enableAntigravityQuota = ref(localStorage.getItem('nsd_ai_quota_antigravit
 const quotaDisplayMode = ref<'auto' | 'open' | 'always'>((localStorage.getItem('nsd_ai_quota_mode') as 'auto' | 'open' | 'always') || 'open');
 const aiQuotaData = ref<AiQuotaPayload | null>(null);
 const codexActivity = ref<CodexActivityPayload | null>(null);
+const agyActivity = ref<AgyActivityPayload | null>(null);
 const isAiQuotaHovered = ref(false);
 const isRefreshingAiQuota = ref(false);
 let unlistenAiQuota: (() => void) | null = null;
 let unlistenAiQuotaSettings: (() => void) | null = null;
 let unlistenCodexActivity: (() => void) | null = null;
+let unlistenAgyActivity: (() => void) | null = null;
 
 const isCodexActive = computed(() => {
     if (codexActivity.value) {
         return codexActivity.value.state === 'thinking' || codexActivity.value.state === 'executing';
     }
     return !!aiQuotaData.value?.codex?.is_active;
+});
+
+const isAgyActive = computed(() => {
+    if (agyActivity.value) {
+        return agyActivity.value.state === 'thinking' || agyActivity.value.state === 'executing';
+    }
+    return false;
 });
 
 const codexStatusText = computed(() => {
@@ -2129,6 +2161,26 @@ const codexStatusText = computed(() => {
     }
 });
 
+const agyStatusText = computed(() => {
+    if (!agyActivity.value || agyActivity.value.state === 'idle') {
+        return isAgyActive.value ? '✦ Working' : null;
+    }
+    switch (agyActivity.value.state) {
+        case 'thinking':
+            return '✦ Thinking...';
+        case 'executing':
+            return `⚡ ${agyActivity.value.detail_message || 'Executing'}`;
+        case 'waiting_approval':
+            return '⚠️ Approval Required';
+        case 'completed':
+            return '✓ Done';
+        case 'failed':
+            return '✕ Failed';
+        default:
+            return '✦ Working';
+    }
+});
+
 const currentAiActivityState = computed<'idle' | 'thinking' | 'executing' | 'waiting' | 'completed' | 'failed'>(() => {
     if (codexActivity.value && codexActivity.value.state !== 'idle') {
         switch (codexActivity.value.state) {
@@ -2136,6 +2188,16 @@ const currentAiActivityState = computed<'idle' | 'thinking' | 'executing' | 'wai
             case 'executing': return 'executing';
             case 'waiting_approval': return 'waiting';
             case 'review': return 'completed';
+            case 'failed': return 'failed';
+            default: break;
+        }
+    }
+    if (agyActivity.value && agyActivity.value.state !== 'idle') {
+        switch (agyActivity.value.state) {
+            case 'thinking': return 'thinking';
+            case 'executing': return 'executing';
+            case 'waiting_approval': return 'waiting';
+            case 'completed': return 'completed';
             case 'failed': return 'failed';
             default: break;
         }
@@ -2150,7 +2212,7 @@ const currentAiActivityState = computed<'idle' | 'thinking' | 'executing' | 'wai
         }
         return 'executing';
     }
-    if (isCodexActive.value) {
+    if (isCodexActive.value || isAgyActive.value) {
         return 'thinking';
     }
     return 'idle';
@@ -2179,16 +2241,45 @@ const codexWeeklyRemaining = computed(() => {
     return lastKnownCodexWeekly.value;
 });
 
+const lastKnownAgyPrimary = ref<number | null>(null);
+const lastKnownAgySecondary = ref<number | null>(null);
+const lastKnownAgyWeekly = ref<number | null>(null);
+
 const antigravityPrimaryRemaining = computed(() => {
     const fh = aiQuotaData.value?.antigravity?.five_hour;
-    if (!fh) return null;
-    return Math.max(0, Math.min(100, Math.round(fh.percent_remaining)));
+    if (fh && typeof fh.percent_remaining === 'number') {
+        const val = Math.max(0, Math.min(100, Math.round(fh.percent_remaining)));
+        lastKnownAgyPrimary.value = val;
+        return val;
+    }
+    return lastKnownAgyPrimary.value;
 });
 
 const antigravitySecondaryRemaining = computed(() => {
     const sq = aiQuotaData.value?.antigravity?.secondary_quota;
-    if (!sq) return null;
-    return Math.max(0, Math.min(100, Math.round(sq.percent_remaining)));
+    if (sq && typeof sq.percent_remaining === 'number') {
+        const val = Math.max(0, Math.min(100, Math.round(sq.percent_remaining)));
+        lastKnownAgySecondary.value = val;
+        return val;
+    }
+    return lastKnownAgySecondary.value;
+});
+
+const antigravityWeeklyRemaining = computed(() => {
+    const wk = aiQuotaData.value?.antigravity?.weekly;
+    if (wk && typeof wk.percent_remaining === 'number') {
+        const val = Math.max(0, Math.min(100, Math.round(wk.percent_remaining)));
+        lastKnownAgyWeekly.value = val;
+        return val;
+    }
+    return lastKnownAgyWeekly.value;
+});
+
+onUnmounted(() => {
+    if (unlistenAiQuota) unlistenAiQuota();
+    if (unlistenAiQuotaSettings) unlistenAiQuotaSettings();
+    if (unlistenCodexActivity) unlistenCodexActivity();
+    if (unlistenAgyActivity) unlistenAgyActivity();
 });
 
 const displayAiQuota = computed(() => {
@@ -3642,6 +3733,14 @@ onMounted(async () => {
         }
     });
 
+    // 监听控制台发来的目标音乐播放器平台切换指令
+    await listen<{ player: string }>('control-target-player', async (event) => {
+        await invoke('set_target_player', { player: event.payload.player }).catch(() => { });
+        if (isMusicCtlEnabled.value) {
+            syncMusicStatus();
+        }
+    });
+
     // 监听控制台发来的资源监控开关
     await listen<{ enabled: boolean }>('control-sys-resource', (event) => {
         const isEnabled = event.payload.enabled;
@@ -3940,6 +4039,11 @@ onMounted(async () => {
         codexActivity.value = event.payload;
     });
 
+    // 监听 Antigravity 语义活动事件 (Transcript Tailer)
+    unlistenAgyActivity = await listen<AgyActivityPayload>('agy-activity-event', (event) => {
+        agyActivity.value = event.payload;
+    });
+
     // 监听控制台发来的 AI Quota 配置同步指令
     unlistenAiQuotaSettings = await listen<{
         enabled: boolean;
@@ -3956,10 +4060,11 @@ onMounted(async () => {
 
     // 初始化获取一次 AI Quota 初始设置与数据
     try {
-        const [quotaSettings, initialQuota, initialCodexActivity] = await Promise.all([
+        const [quotaSettings, initialQuota, initialCodexActivity, initialAgyActivity] = await Promise.all([
             invoke<any>('get_ai_quota_settings'),
             invoke<AiQuotaPayload>('get_ai_quota_data'),
             invoke<CodexActivityPayload>('get_codex_activity'),
+            invoke<AgyActivityPayload>('get_agy_activity'),
         ]);
         if (quotaSettings) {
             enableAiQuota.value = quotaSettings.enabled;
@@ -3973,9 +4078,16 @@ onMounted(async () => {
         if (initialCodexActivity) {
             codexActivity.value = initialCodexActivity;
         }
+        if (initialAgyActivity) {
+            agyActivity.value = initialAgyActivity;
+        }
     } catch (e) {
         console.error('Failed to load initial AI quota:', e);
     }
+
+    // 启动时立即向 Rust 后端同步用户选择的目标音乐播放器平台 (避免默认回退到 netease 导致启动时检测不到 YouTube Music / Spotify 等)
+    const savedPlayer = localStorage.getItem('nsd_target_player') || 'netease';
+    await invoke('set_target_player', { player: savedPlayer }).catch(() => { });
 
     // 在你原有的每秒刷新定时器中，顺带执行音乐同步
     // 1. 高频定时器：专门负责网速和硬件监控（每 500ms ~ 1000ms 刷新一次）
@@ -3994,6 +4106,16 @@ onMounted(async () => {
             syncMusicStatus();
         }
     }, 2000);
+
+    // 启动时立即执行一次音乐同步检测，并在 400ms 后补检一次（避免 WinRT SMTC 冷启动会话绑定延迟）
+    if (isMusicCtlEnabled.value) {
+        syncMusicStatus();
+        setTimeout(() => {
+            if (isMusicCtlEnabled.value && (!currentSongName.value || currentSongName.value === t('noSongPlaying'))) {
+                syncMusicStatus();
+            }
+        }, 400);
+    }
 
 
     // 3. 低频定时器：专门轮询系统通知（通知不需要抢时间，2.5秒换来极低的资源占用）
@@ -5979,15 +6101,15 @@ onUnmounted(() => {
     gap: 2.5px;
     width: 100%;
     height: 100%;
-    padding: 1px 4px;
+    padding: 1px 2px;
     cursor: pointer;
 }
 
 .solo-codex-row {
     display: grid;
-    grid-template-columns: 22px 34px minmax(40px, 1fr);
+    grid-template-columns: 19px 38px minmax(0, 1fr);
     align-items: center;
-    gap: 6px;
+    gap: 3px;
     line-height: 1;
 }
 
@@ -6012,18 +6134,29 @@ onUnmounted(() => {
 }
 
 .solo-quota-value {
+    display: grid;
+    grid-template-columns: 6px minmax(0, 1fr);
+    column-gap: 2px;
+    align-items: center;
     font-size: 11px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.3px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     text-align: right;
+    white-space: nowrap;
+}
+
+.solo-quota-value .activity-pulse-dot {
+    margin-right: 0;
+    vertical-align: initial;
 }
 
 .solo-progress {
+    min-width: 0;
     width: 100%;
     height: 2px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(203, 213, 225, 0.38);
     border-radius: 999px;
     overflow: hidden;
     position: relative;
@@ -6098,6 +6231,44 @@ onUnmounted(() => {
     }
 }
 
+.activity-pulse-dot {
+    display: inline-block;
+    width: 4.5px;
+    height: 4.5px;
+    border-radius: 50%;
+    margin-right: 3px;
+    vertical-align: 1px;
+    visibility: hidden;
+}
+
+.activity-pulse-dot.is-visible {
+    visibility: visible;
+}
+
+.activity-pulse-dot.cdx-pulse-dot {
+    background-color: #10b981;
+    box-shadow: 0 0 6px #10b981;
+    animation: codex-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.activity-pulse-dot.agy-pulse-dot {
+    background-color: #818cf8;
+    box-shadow: 0 0 6px #818cf8;
+    animation: agy-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes agy-dot-pulse {
+    0%, 100% {
+        transform: scale(0.8);
+        opacity: 0.6;
+    }
+    50% {
+        transform: scale(1.35);
+        opacity: 1;
+        box-shadow: 0 0 8px #818cf8;
+    }
+}
+
 .codex-pill.is-active {
     filter: drop-shadow(0 0 2.5px rgba(16, 185, 129, 0.4));
 }
@@ -6138,6 +6309,22 @@ onUnmounted(() => {
     font-weight: 700;
     letter-spacing: 0.2px;
     animation: codex-badge-pulse 1.6s ease-in-out infinite;
+}
+
+.hud-active-badge.agy-active-badge {
+    background: rgba(99, 102, 241, 0.22);
+    color: #818cf8;
+    animation: agy-badge-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes agy-badge-pulse {
+    0%, 100% {
+        opacity: 0.8;
+    }
+    50% {
+        opacity: 1;
+        box-shadow: 0 0 6px rgba(99, 102, 241, 0.4);
+    }
 }
 
 @keyframes codex-badge-pulse {
@@ -6366,17 +6553,26 @@ onUnmounted(() => {
     align-items: center;
     font-size: 10px;
     line-height: 1;
+    min-width: 0;
 }
 
 .quota-row-name {
     font-weight: 600;
     opacity: 0.8;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .quota-row-meta {
     display: flex;
     align-items: center;
     gap: 4px;
+    min-width: 0;
+    max-width: 58%;
+    overflow: hidden;
+    white-space: nowrap;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     font-size: 10px;
 }
@@ -6384,17 +6580,22 @@ onUnmounted(() => {
 .quota-row-percent {
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
 }
 
 .quota-meta-dot {
     opacity: 0.35;
     font-size: 8px;
+    flex-shrink: 0;
 }
 
 .quota-reset-time {
     font-size: 9px;
     opacity: 0.6;
     font-weight: 500;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .quota-progress-track {
