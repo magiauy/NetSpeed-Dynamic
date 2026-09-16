@@ -60,6 +60,7 @@ impl Default for CodexActivityPayload {
 
 /// Raw line parsed from `.codex/sessions/**/*.jsonl`
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct RawSessionRecord {
     pub timestamp: Option<String>,
     pub ordinal: Option<u64>,
@@ -69,6 +70,7 @@ pub struct RawSessionRecord {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct RawPayload {
     #[serde(rename = "type")]
     pub payload_type: Option<String>,

@@ -207,130 +207,143 @@
                                         </div>
                                     </template>
 
-                                    <!-- Dual Mode: Codex: [X]% | AGY: [Y]% -->
+                                    <!-- Dual Mode: CDX (5h) on top, AGY (5h) on bottom with progress lines -->
                                     <template v-else>
-                                        <div class="quota-pill codex-pill" :class="{ 'is-active': isCodexActive }" :title="`Codex 5h: ${codex5hRemaining ?? '--'}%${isCodexActive ? ' (✦ Active)' : ''}`">
-                                            <span class="quota-brand-name codex-brand">Codex:</span>
-                                            <span class="quota-percent" :style="{ color: getQuotaColor(codex5hRemaining ?? 100) }">
-                                                {{ codex5hRemaining != null ? `${codex5hRemaining}%` : (aiQuotaData?.codex?.connected ? '100%' : 'OFF') }}
-                                            </span>
-                                            <span v-if="isCodexActive" class="codex-active-dot"></span>
-                                        </div>
-                                        <div class="quota-divider"></div>
-                                        <div class="quota-pill agy-pill" :title="`AGY: ${antigravityPrimaryRemaining ?? '--'}%`">
-                                            <span class="quota-brand-name agy-brand">AGY:</span>
-                                            <span class="quota-percent" :style="{ color: getQuotaColor(antigravityPrimaryRemaining ?? 100) }">
-                                                {{ antigravityPrimaryRemaining != null ? `${antigravityPrimaryRemaining}%` : (aiQuotaData?.antigravity?.connected ? '100%' : 'OFF') }}
-                                            </span>
+                                        <div class="solo-codex dual-mode" :class="{ 'is-active': isCodexActive }" :title="`Codex (CDX) 5h: ${codex5hRemaining ?? '--'}%${isCodexActive ? ' (✦ Active)' : ''} | Antigravity (AGY) 5h: ${antigravityPrimaryRemaining ?? '--'}%`">
+                                            <!-- Row 1: CDX 5h -->
+                                            <div class="solo-codex-row">
+                                                <span class="solo-quota-label cdx-brand">CDX</span>
+                                                <span class="solo-quota-value" :style="{ color: getQuotaColor(codex5hRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)) }">
+                                                    {{ codex5hRemaining != null ? `${codex5hRemaining}%` : (aiQuotaData?.codex?.connected ? '100%' : 'OFF') }}
+                                                </span>
+                                                <div class="solo-progress">
+                                                    <div class="solo-progress-fill" :class="{ 'is-active': isCodexActive }" :style="{ width: `${codex5hRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)}%`, backgroundColor: getQuotaColor(codex5hRemaining ?? (aiQuotaData?.codex?.connected ? 100 : 0)) }"></div>
+                                                </div>
+                                            </div>
+                                            <!-- Row 2: AGY 5h -->
+                                            <div class="solo-codex-row">
+                                                <span class="solo-quota-label agy-brand">AGY</span>
+                                                <span class="solo-quota-value" :style="{ color: getQuotaColor(antigravityPrimaryRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)) }">
+                                                    {{ antigravityPrimaryRemaining != null ? `${antigravityPrimaryRemaining}%` : (aiQuotaData?.antigravity?.connected ? '100%' : 'OFF') }}
+                                                </span>
+                                                <div class="solo-progress">
+                                                    <div class="solo-progress-fill" :style="{ width: `${antigravityPrimaryRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)}%`, backgroundColor: getQuotaColor(antigravityPrimaryRemaining ?? (aiQuotaData?.antigravity?.connected ? 100 : 0)) }"></div>
+                                                </div>
+                                            </div>
                                         </div>
                                     </template>
                                 </div>
 
                                 <!-- Expanded HUD Popover Card -->
                                 <div v-else class="ai-quota-expanded" key="expanded">
-                                <div class="hud-header">
-                                    <div class="hud-title-wrap">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="hud-header-icon">
-                                            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                        </svg>
-                                        <span class="hud-title">{{ t('aiQuotaMonitor') }}</span>
-                                    </div>
-                                    <button class="hud-refresh-btn" :class="{ 'is-spinning': isRefreshingAiQuota }" @click.stop="handleRefreshAiQuota" :title="t('refresh')">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                            <path d="M23 4v6h-6M1 20v-6h6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                        </svg>
-                                    </button>
-                                </div>
-
-                                <div class="hud-cards-container">
-                                    <!-- Codex Section -->
-                                    <div v-if="enableCodexQuota" class="hud-provider-section">
-                                        <div class="hud-provider-header">
-                                            <div class="hud-provider-badge codex-tag">
-                                                <span class="provider-dot" :class="{ 'is-pulsing': isCodexActive }"></span>
-                                                <span>OpenAI Codex</span>
-                                                <span v-if="codexStatusText" class="hud-active-badge">{{ codexStatusText }}</span>
-                                            </div>
-                                            <span v-if="aiQuotaData?.codex?.plan_type" class="hud-plan-badge">{{ aiQuotaData.codex.plan_type }}</span>
-                                            <span v-else class="hud-status-badge" :class="{ active: aiQuotaData?.codex?.connected }">
-                                                {{ aiQuotaData?.codex?.connected ? t('active') : t('notDetected') }}
-                                            </span>
+                                    <div class="hud-header">
+                                        <div class="hud-title-wrap">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="hud-header-icon">
+                                                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            </svg>
+                                            <span class="hud-title">{{ t('aiQuotaMonitor') }}</span>
                                         </div>
-                                        <div v-if="aiQuotaData?.codex?.five_hour" class="hud-quota-row">
-                                            <div class="quota-row-label">
-                                                <span>{{ t('fiveHourLimit') }}</span>
-                                                <span v-if="aiQuotaData.codex.five_hour.reset_time_desc" class="quota-reset-hint">{{ aiQuotaData.codex.five_hour.reset_time_desc }}</span>
-                                            </div>
-                                            <div class="quota-progress-track">
-                                                <div class="quota-progress-fill" :style="{ width: `${codex5hRemaining ?? 100}%`, backgroundColor: getQuotaColor(codex5hRemaining ?? 100) }"></div>
-                                            </div>
-                                            <div class="quota-row-value">
-                                                <span :style="{ color: getQuotaColor(codex5hRemaining ?? 100) }">{{ codex5hRemaining ?? 100 }}%</span>
-                                                <span class="quota-unit">{{ t('remaining') }}</span>
-                                            </div>
-                                        </div>
-                                        <div v-if="aiQuotaData?.codex?.weekly" class="hud-quota-row secondary-row">
-                                            <div class="quota-row-label">
-                                                <span>{{ t('weeklyLimit') }}</span>
-                                                <span v-if="aiQuotaData.codex.weekly.reset_time_desc" class="quota-reset-hint">{{ aiQuotaData.codex.weekly.reset_time_desc }}</span>
-                                            </div>
-                                            <div class="quota-progress-track">
-                                                <div class="quota-progress-fill" :style="{ width: `${codexWeeklyRemaining ?? 100}%`, backgroundColor: getQuotaColor(codexWeeklyRemaining ?? 100) }"></div>
-                                            </div>
-                                            <div class="quota-row-value">
-                                                <span :style="{ color: getQuotaColor(codexWeeklyRemaining ?? 100) }">{{ codexWeeklyRemaining ?? 100 }}%</span>
-                                                <span class="quota-unit">{{ t('remaining') }}</span>
-                                            </div>
-                                        </div>
-                                        <div v-if="aiQuotaData?.codex?.error_message" class="hud-error-msg">
-                                            {{ aiQuotaData.codex.error_message }}
-                                        </div>
+                                        <button class="hud-refresh-btn" :class="{ 'is-spinning': isRefreshingAiQuota }" @click.stop="handleRefreshAiQuota" :title="t('refresh')">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                                <path d="M23 4v6h-6M1 20v-6h6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            </svg>
+                                        </button>
                                     </div>
 
-                                    <!-- Antigravity Section -->
-                                    <div v-if="enableAntigravityQuota" class="hud-provider-section">
-                                        <div class="hud-provider-header">
-                                            <div class="hud-provider-badge agy-tag">
-                                                <span class="provider-dot"></span>
-                                                <span>Google Antigravity</span>
+                                    <div class="hud-cards-container">
+                                        <!-- Codex Section -->
+                                        <div v-if="enableCodexQuota" class="hud-provider-section">
+                                            <div class="hud-provider-header">
+                                                <div class="hud-provider-badge codex-tag">
+                                                    <span class="provider-dot" :class="{ 'is-pulsing': isCodexActive }"></span>
+                                                    <span>OpenAI Codex</span>
+                                                    <span v-if="codexStatusText" class="hud-active-badge">{{ codexStatusText }}</span>
+                                                </div>
+                                                <span class="hud-status-badge" :class="{ active: aiQuotaData?.codex?.connected }">
+                                                    {{ aiQuotaData?.codex?.connected ? 'ON' : 'OFF' }}
+                                                </span>
                                             </div>
-                                            <span class="hud-status-badge" :class="{ active: aiQuotaData?.antigravity?.connected }">
-                                                {{ aiQuotaData?.antigravity?.connected ? (aiQuotaData.antigravity.plan_type || t('active')) : t('notDetected') }}
-                                            </span>
+                                            <!-- Codex 5h -->
+                                            <div v-if="aiQuotaData?.codex?.five_hour" class="hud-quota-row">
+                                                <div class="quota-row-header">
+                                                    <span class="quota-row-name">{{ t('fiveHourLimit') }}</span>
+                                                    <div class="quota-row-meta">
+                                                        <span class="quota-row-percent" :style="{ color: getQuotaColor(codex5hRemaining ?? 100) }">{{ codex5hRemaining ?? 100 }}%</span>
+                                                        <template v-if="aiQuotaData.codex.five_hour.reset_time_desc">
+                                                            <span class="quota-meta-dot">•</span>
+                                                            <span class="quota-reset-time">{{ aiQuotaData.codex.five_hour.reset_time_desc }}</span>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                                <div class="quota-progress-track">
+                                                    <div class="quota-progress-fill" :style="{ width: `${codex5hRemaining ?? 100}%`, backgroundColor: getQuotaColor(codex5hRemaining ?? 100) }"></div>
+                                                </div>
+                                            </div>
+                                            <!-- Codex Weekly -->
+                                            <div v-if="aiQuotaData?.codex?.weekly" class="hud-quota-row">
+                                                <div class="quota-row-header">
+                                                    <span class="quota-row-name">{{ t('weeklyLimit') }}</span>
+                                                    <div class="quota-row-meta">
+                                                        <span class="quota-row-percent" :style="{ color: getQuotaColor(codexWeeklyRemaining ?? 100) }">{{ codexWeeklyRemaining ?? 100 }}%</span>
+                                                        <template v-if="aiQuotaData.codex.weekly.reset_time_desc">
+                                                            <span class="quota-meta-dot">•</span>
+                                                            <span class="quota-reset-time">{{ aiQuotaData.codex.weekly.reset_time_desc }}</span>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                                <div class="quota-progress-track">
+                                                    <div class="quota-progress-fill" :style="{ width: `${codexWeeklyRemaining ?? 100}%`, backgroundColor: getQuotaColor(codexWeeklyRemaining ?? 100) }"></div>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div v-if="aiQuotaData?.antigravity?.five_hour" class="hud-quota-row">
-                                            <div class="quota-row-label">
-                                                <span>Gemini / Primary</span>
-                                                <span v-if="aiQuotaData.antigravity.five_hour.reset_time_desc" class="quota-reset-hint">{{ aiQuotaData.antigravity.five_hour.reset_time_desc }}</span>
+
+                                        <!-- Antigravity Section -->
+                                        <div v-if="enableAntigravityQuota" class="hud-provider-section">
+                                            <div class="hud-provider-header">
+                                                <div class="hud-provider-badge agy-tag">
+                                                    <span class="provider-dot"></span>
+                                                    <span>Google Antigravity</span>
+                                                </div>
+                                                <span class="hud-status-badge" :class="{ active: aiQuotaData?.antigravity?.connected }">
+                                                    {{ aiQuotaData?.antigravity?.connected ? 'ON' : 'OFF' }}
+                                                </span>
                                             </div>
-                                            <div class="quota-progress-track">
-                                                <div class="quota-progress-fill" :style="{ width: `${antigravityPrimaryRemaining ?? 100}%`, backgroundColor: getQuotaColor(antigravityPrimaryRemaining ?? 100) }"></div>
+                                            <!-- Gemini 5h -->
+                                            <div v-if="aiQuotaData?.antigravity?.five_hour" class="hud-quota-row">
+                                                <div class="quota-row-header">
+                                                    <span class="quota-row-name">Gemini (5h)</span>
+                                                    <div class="quota-row-meta">
+                                                        <span class="quota-row-percent" :style="{ color: getQuotaColor(antigravityPrimaryRemaining ?? 100) }">{{ antigravityPrimaryRemaining ?? 100 }}%</span>
+                                                        <template v-if="aiQuotaData.antigravity.five_hour.reset_time_desc">
+                                                            <span class="quota-meta-dot">•</span>
+                                                            <span class="quota-reset-time">{{ aiQuotaData.antigravity.five_hour.reset_time_desc }}</span>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                                <div class="quota-progress-track">
+                                                    <div class="quota-progress-fill" :style="{ width: `${antigravityPrimaryRemaining ?? 100}%`, backgroundColor: getQuotaColor(antigravityPrimaryRemaining ?? 100) }"></div>
+                                                </div>
                                             </div>
-                                            <div class="quota-row-value">
-                                                <span :style="{ color: getQuotaColor(antigravityPrimaryRemaining ?? 100) }">{{ antigravityPrimaryRemaining ?? 100 }}%</span>
-                                                <span class="quota-unit">{{ t('remaining') }}</span>
+                                            <!-- Claude / Secondary -->
+                                            <div v-if="aiQuotaData?.antigravity?.secondary_quota" class="hud-quota-row">
+                                                <div class="quota-row-header">
+                                                    <span class="quota-row-name">{{ aiQuotaData.antigravity.secondary_label || 'Claude / GPT' }}</span>
+                                                    <div class="quota-row-meta">
+                                                        <span class="quota-row-percent" :style="{ color: getQuotaColor(antigravitySecondaryRemaining ?? 100) }">{{ antigravitySecondaryRemaining ?? 100 }}%</span>
+                                                        <template v-if="aiQuotaData.antigravity.secondary_quota.reset_time_desc">
+                                                            <span class="quota-meta-dot">•</span>
+                                                            <span class="quota-reset-time">{{ aiQuotaData.antigravity.secondary_quota.reset_time_desc }}</span>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                                <div class="quota-progress-track">
+                                                    <div class="quota-progress-fill" :style="{ width: `${antigravitySecondaryRemaining ?? 100}%`, backgroundColor: getQuotaColor(antigravitySecondaryRemaining ?? 100) }"></div>
+                                                </div>
                                             </div>
-                                        </div>
-                                        <div v-if="aiQuotaData?.antigravity?.secondary_quota" class="hud-quota-row secondary-row">
-                                            <div class="quota-row-label">
-                                                <span>{{ aiQuotaData.antigravity.secondary_label || 'Claude / Sonnet' }}</span>
-                                                <span v-if="aiQuotaData.antigravity.secondary_quota.reset_time_desc" class="quota-reset-hint">{{ aiQuotaData.antigravity.secondary_quota.reset_time_desc }}</span>
-                                            </div>
-                                            <div class="quota-progress-track">
-                                                <div class="quota-progress-fill" :style="{ width: `${antigravitySecondaryRemaining ?? 100}%`, backgroundColor: getQuotaColor(antigravitySecondaryRemaining ?? 100) }"></div>
-                                            </div>
-                                            <div class="quota-row-value">
-                                                <span :style="{ color: getQuotaColor(antigravitySecondaryRemaining ?? 100) }">{{ antigravitySecondaryRemaining ?? 100 }}%</span>
-                                                <span class="quota-unit">{{ t('remaining') }}</span>
-                                            </div>
-                                        </div>
-                                        <div v-if="aiQuotaData?.antigravity?.error_message" class="hud-error-msg">
-                                            {{ aiQuotaData.antigravity.error_message }}
                                         </div>
                                     </div>
                                 </div>
-                            </div>
                         </transition>
                     </div>
 
@@ -5972,18 +5985,30 @@ onUnmounted(() => {
 
 .solo-codex-row {
     display: grid;
-    grid-template-columns: 18px 34px minmax(50px, 1fr);
+    grid-template-columns: 22px 34px minmax(40px, 1fr);
     align-items: center;
     gap: 6px;
     line-height: 1;
 }
 
 .solo-quota-label {
-    font-size: 10px;
-    font-weight: 500;
-    opacity: 0.55;
+    font-size: 9.5px;
+    font-weight: 600;
+    opacity: 0.65;
     letter-spacing: -0.2px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.solo-quota-label.cdx-brand {
+    color: #10a37f;
+    opacity: 0.95;
+    font-weight: 700;
+}
+
+.solo-quota-label.agy-brand {
+    color: #818cf8;
+    opacity: 0.95;
+    font-weight: 700;
 }
 
 .solo-quota-value {
@@ -6328,71 +6353,63 @@ onUnmounted(() => {
     opacity: 0.7;
 }
 
-.hud-status-badge.active {
-    background: rgba(99, 102, 241, 0.2);
-    color: #818cf8;
-    opacity: 1;
-}
-
 .hud-quota-row {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    margin-top: 1px;
+    gap: 3px;
+    margin-top: 2px;
 }
 
-.quota-row-label {
+.quota-row-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 9.5px;
-    color: currentColor;
-    opacity: 0.75;
-    font-weight: 500;
+    font-size: 10px;
+    line-height: 1;
 }
 
-.quota-reset-hint {
+.quota-row-name {
+    font-weight: 600;
+    opacity: 0.8;
+}
+
+.quota-row-meta {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 10px;
+}
+
+.quota-row-percent {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.quota-meta-dot {
+    opacity: 0.35;
+    font-size: 8px;
+}
+
+.quota-reset-time {
     font-size: 9px;
     opacity: 0.6;
-    font-family: ui-monospace, monospace;
+    font-weight: 500;
 }
 
 .quota-progress-track {
     width: 100%;
-    height: 3.5px;
-    background: rgba(150, 150, 150, 0.2);
-    border-radius: 2px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
     overflow: hidden;
     position: relative;
 }
 
 .quota-progress-fill {
     height: 100%;
-    border-radius: 2px;
+    border-radius: 999px;
     transition: width 0.4s ease, background-color 0.4s ease;
-}
-
-.quota-row-value {
-    display: flex;
-    justify-content: flex-end;
-    align-items: baseline;
-    gap: 3px;
-    font-size: 10px;
-    font-weight: 700;
-    font-family: ui-monospace, monospace;
-}
-
-.quota-unit {
-    font-size: 8.5px;
-    font-weight: normal;
-    opacity: 0.5;
-    color: currentColor;
-}
-
-.hud-error-msg {
-    font-size: 9px;
-    color: #ef4444;
-    line-height: 1.2;
 }
 
 @keyframes spin {

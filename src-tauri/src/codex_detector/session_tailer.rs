@@ -8,6 +8,7 @@ use super::types::{RawPayload, RawSessionRecord};
 
 /// Discovered raw event from session jsonl stream
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum SessionStreamEvent {
     TaskStarted {
         turn_id: Option<String>,

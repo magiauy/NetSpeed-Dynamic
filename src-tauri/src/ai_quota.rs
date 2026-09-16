@@ -170,7 +170,7 @@ fn get_now_unix() -> i64 {
 fn format_duration_desc(target_timestamp: i64) -> String {
     let now = get_now_unix();
     if target_timestamp <= now {
-        return "Sẵn sàng (Đã reset)".to_string();
+        return "Đã reset".to_string();
     }
     let diff = target_timestamp - now;
     let hours = diff / 3600;
@@ -178,11 +178,15 @@ fn format_duration_desc(target_timestamp: i64) -> String {
     if hours > 24 {
         let days = hours / 24;
         let rem_hours = hours % 24;
-        format!("{} ngày {} giờ", days, rem_hours)
+        if rem_hours > 0 {
+            format!("{}d {}h", days, rem_hours)
+        } else {
+            format!("{}d", days)
+        }
     } else if hours > 0 {
         format!("{}h {}m", hours, minutes)
     } else {
-        format!("{} phút", minutes)
+        format!("{}m", minutes.max(1))
     }
 }
 
@@ -313,8 +317,17 @@ async fn fetch_codex_quota() -> ProviderQuota {
                     let mut five_hour = None;
                     let mut weekly = None;
 
-                    // Parse five_hour_limit
-                    if let Some(fh) = res_json.pointer("/usage/five_hour_limit").or_else(|| res_json.get("five_hour_limit")) {
+                    // 1. Parse rate_limit.primary_window (5h limit: 18000s)
+                    if let Some(primary) = res_json.pointer("/rate_limit/primary_window") {
+                        let used = primary.get("used_percent").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let pct = (100.0 - used).max(0.0).min(100.0);
+                        let resets_at = primary.get("reset_at").and_then(|v| v.as_i64());
+                        five_hour = Some(QuotaWindow {
+                            percent_remaining: pct,
+                            reset_time_desc: resets_at.map(format_duration_desc),
+                            reset_timestamp: resets_at,
+                        });
+                    } else if let Some(fh) = res_json.pointer("/usage/five_hour_limit").or_else(|| res_json.get("five_hour_limit")) {
                         let pct = fh.get("percent_remaining").and_then(|v| v.as_f64()).unwrap_or(100.0);
                         let resets_at = fh.get("resets_at").and_then(|v| v.as_i64());
                         five_hour = Some(QuotaWindow {
@@ -324,8 +337,17 @@ async fn fetch_codex_quota() -> ProviderQuota {
                         });
                     }
 
-                    // Parse weekly_limit
-                    if let Some(wl) = res_json.pointer("/usage/weekly_limit").or_else(|| res_json.get("weekly_limit")) {
+                    // 2. Parse rate_limit.secondary_window (Weekly limit: 604800s)
+                    if let Some(secondary) = res_json.pointer("/rate_limit/secondary_window") {
+                        let used = secondary.get("used_percent").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let pct = (100.0 - used).max(0.0).min(100.0);
+                        let resets_at = secondary.get("reset_at").and_then(|v| v.as_i64());
+                        weekly = Some(QuotaWindow {
+                            percent_remaining: pct,
+                            reset_time_desc: resets_at.map(format_duration_desc),
+                            reset_timestamp: resets_at,
+                        });
+                    } else if let Some(wl) = res_json.pointer("/usage/weekly_limit").or_else(|| res_json.get("weekly_limit")) {
                         let pct = wl.get("percent_remaining").and_then(|v| v.as_f64()).unwrap_or(100.0);
                         let resets_at = wl.get("resets_at").and_then(|v| v.as_i64());
                         weekly = Some(QuotaWindow {
@@ -335,16 +357,11 @@ async fn fetch_codex_quota() -> ProviderQuota {
                         });
                     }
 
-                    // Fallback nếu JSON trả về dạng trực tiếp khác
-                    if five_hour.is_none() {
-                        if let Some(rem) = res_json.pointer("/five_hour_percent").and_then(|v| v.as_f64()) {
-                            five_hour = Some(QuotaWindow {
-                                percent_remaining: rem,
-                                reset_time_desc: None,
-                                reset_timestamp: None,
-                            });
-                        }
-                    }
+                    let account_email = res_json
+                        .get("email")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .or(account_email);
 
                     let plan = res_json
                         .get("plan_type")
@@ -387,25 +404,36 @@ async fn fetch_codex_quota() -> ProviderQuota {
     }
 }
 
-/// Tìm binary agy trên máy (ưu tiên Local AppData, PATH)
-fn find_agy_executable() -> PathBuf {
+/// Tìm binary agy.exe tuyệt đối trên máy (ưu tiên Local AppData, PATH)
+fn find_agy_executable() -> Option<PathBuf> {
     if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
         let p = PathBuf::from(&local_app_data).join("agy").join("bin").join("agy.exe");
         if p.exists() {
-            return p;
-        }
-        let p_cmd = PathBuf::from(&local_app_data).join("agy").join("bin").join("agy.cmd");
-        if p_cmd.exists() {
-            return p_cmd;
+            return Some(p);
         }
     }
     if let Ok(user_profile) = std::env::var("USERPROFILE") {
         let p = PathBuf::from(&user_profile).join("AppData").join("Local").join("agy").join("bin").join("agy.exe");
         if p.exists() {
-            return p;
+            return Some(p);
         }
     }
-    PathBuf::from("agy")
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join("agy.exe");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let candidate = dir.join("agy");
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Chuyển đổi chuỗi ISO8601 (e.g. "2026-09-16T18:03:49Z") thành unix timestamp
@@ -415,17 +443,22 @@ fn parse_iso8601_to_unix(iso: &str) -> Option<i64> {
         .map(|dt| dt.timestamp())
 }
 
-/// Fetch Quota trực tiếp qua agy CLI (`agy -p "/usage" --output-format json`)
+/// Fetch Quota trực tiếp qua agy CLI (`agy -p "/usage" --output-format json`) chạy ngầm 100% không flash console
 async fn fetch_antigravity_via_cli() -> Option<ProviderQuota> {
     let now = get_now_unix();
-    let agy_bin = find_agy_executable();
+    let agy_bin = find_agy_executable()?;
 
     let mut cmd = tokio::process::Command::new(agy_bin);
     cmd.args(["-p", "/usage", "--output-format", "json"]);
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::null());
     
     #[cfg(target_os = "windows")]
     {
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        // 0x08000000: CREATE_NO_WINDOW (Không tạo cửa sổ console)
+        // 0x00000200: CREATE_NEW_PROCESS_GROUP (Tạo process group riêng, tránh gắn vào console cha)
+        cmd.creation_flags(0x08000000 | 0x00000200);
     }
 
     let output = match tokio::time::timeout(Duration::from_secs(8), cmd.output()).await {
@@ -458,10 +491,7 @@ async fn fetch_antigravity_via_cli() -> Option<ProviderQuota> {
                 let pct = (remaining_fraction * 100.0).round().max(0.0).min(100.0);
                 let reset_iso = b.get("reset_time").and_then(|v| v.as_str());
                 let reset_ts = reset_iso.and_then(parse_iso8601_to_unix);
-                let reset_desc = b.get("description")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .or_else(|| reset_ts.map(format_duration_desc));
+                let reset_desc = reset_ts.map(format_duration_desc);
 
                 let quota_win = QuotaWindow {
                     percent_remaining: pct,
@@ -795,19 +825,25 @@ fn check_ide_is_open() -> (bool, Option<String>) {
 /// Fetch toàn bộ dữ liệu Quota theo cấu hình
 pub async fn fetch_all_quota_data() -> AiQuotaPayload {
     let settings = { GLOBAL_AI_SETTINGS.lock().unwrap().clone() };
-    let mut sys = System::new();
 
-    let codex_quota = if settings.show_codex {
-        Some(fetch_codex_quota().await)
-    } else {
-        None
+    let codex_fut = async {
+        if settings.show_codex {
+            Some(fetch_codex_quota().await)
+        } else {
+            None
+        }
     };
 
-    let antigravity_quota = if settings.show_antigravity {
-        Some(fetch_antigravity_quota(&mut sys).await)
-    } else {
-        None
+    let antigravity_fut = async {
+        if settings.show_antigravity {
+            let mut sys = System::new();
+            Some(fetch_antigravity_quota(&mut sys).await)
+        } else {
+            None
+        }
     };
+
+    let (codex_quota, antigravity_quota) = tokio::join!(codex_fut, antigravity_fut);
 
     let (active_is_ide, active_app) = check_active_window_is_ide();
     let (ide_open, open_app) = check_ide_is_open();
@@ -926,3 +962,52 @@ pub fn save_ai_quota_settings(settings: AiQuotaSettings) -> Result<(), String> {
     *s = settings;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_fetch_antigravity() {
+        let quota = fetch_antigravity_via_cli().await;
+        println!("CLI Result: {:?}", quota);
+        let mut sys = System::new();
+        let full_quota = fetch_antigravity_quota(&mut sys).await;
+        println!("Full Antigravity Quota: {:?}", full_quota);
+        assert!(full_quota.connected);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_codex_raw() {
+        let quota = fetch_codex_quota().await;
+        println!("Codex ProviderQuota: {:#?}", quota);
+
+        // Raw request test
+        if let Some(auth_path) = get_codex_auth_path() {
+            if let Ok(c) = tokio::fs::read_to_string(&auth_path).await {
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&c) {
+                    let token = json_val
+                        .pointer("/tokens/access_token")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| json_val.get("access_token").and_then(|v| v.as_str()));
+                    if let Some(token_str) = token {
+                        let client = reqwest::Client::new();
+                        let resp = client
+                            .get("https://chatgpt.com/backend-api/wham/usage")
+                            .header("Authorization", format!("Bearer {}", token_str))
+                            .header("User-Agent", "NetSpeed-Dynamic/1.0")
+                            .send()
+                            .await;
+                        println!("HTTP response: {:?}", resp);
+                        if let Ok(r) = resp {
+                            let text = r.text().await;
+                            println!("Raw body: {:?}", text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
