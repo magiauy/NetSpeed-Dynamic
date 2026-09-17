@@ -52,6 +52,7 @@ pub struct TrackPreloadItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct PreloadRequest {
     pub tracks: Vec<TrackPreloadItem>,
 }

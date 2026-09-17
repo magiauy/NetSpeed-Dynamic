@@ -223,20 +223,20 @@ pub async fn fetch_normalized_lyrics(
         duration_ms / 1000
     );
 
-    // 1. Thử gọi đến Custom AI Server (100.73.90.79:8765)
-    if let Ok(Some(custom_lyrics)) = client::fetch_from_custom_server(&clean_song, &clean_artist, duration_ms).await {
-        println!("[Lyrics] Custom AI Server Success: {} (type: {:?})", track_key, custom_lyrics.sync_type);
-        return Ok(custom_lyrics);
-    }
-
-    // 2. Fallback sang LRCLIB trực tuyến
-    println!("[Lyrics] Custom server unavailable or missing. Falling back to LRCLIB...");
-    if let Ok(Some(lrclib_lyrics)) = client::fetch_from_lrclib_fallback(&clean_song, &clean_artist, duration_ms / 1000).await {
-        println!("[Lyrics] LRCLIB Fallback Success: {}", track_key);
+    // 1. Thử lấy từ LRCLIB trực tuyến (Synced LRC lines)
+    if let Ok(Some(lrclib_lyrics)) = client::fetch_from_lrclib(&clean_song, &clean_artist, duration_ms / 1000).await {
+        println!("[Lyrics] LRCLIB Success: {}", track_key);
         return Ok(lrclib_lyrics);
     }
 
-    // 4. Trả về rỗng nếu không tìm thấy
+    // 2. Fallback sang YouTube Music / LyricFind
+    println!("[Lyrics] LRCLIB unavailable or missing. Falling back to YouTube Music...");
+    if let Ok(Some(yt_lyrics)) = client::fetch_from_ytmusic_fallback(&clean_song, &clean_artist, duration_ms).await {
+        println!("[Lyrics] YouTube Music Fallback Success: {}", track_key);
+        return Ok(yt_lyrics);
+    }
+
+    // 3. Trả về rỗng nếu không tìm thấy
     let empty = NormalizedLyrics {
         track_key: track_key.clone(),
         source: "not_found".to_string(),
@@ -250,10 +250,10 @@ pub async fn fetch_normalized_lyrics(
     Ok(empty)
 }
 
-/// Lệnh Tauri: Gửi danh sách 5 bài tiếp theo trong Playlist để pre-gen ngầm
+/// Lệnh Tauri: Gửi danh sách bài tiếp theo trong Playlist
 #[tauri::command]
-pub async fn preload_upcoming_playlist(tracks: Vec<TrackPreloadItem>) -> Result<(), String> {
-    client::send_preload_queue(tracks).await
+pub async fn preload_upcoming_playlist(_tracks: Vec<TrackPreloadItem>) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(test)]
@@ -313,6 +313,24 @@ mod tests {
         );
         assert_eq!(song, "Chàng Trai Bất Tử");
         assert_eq!(artist, "An Vũ, Sino");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_nang_co_mang_em_ve() {
+        let lyrics = fetch_normalized_lyrics(
+            "Nắng có mang em về".to_string(),
+            "Shartnuss".to_string(),
+            None,
+            322000,
+        )
+        .await
+        .unwrap();
+
+        assert!(!lyrics.lines.is_empty(), "Lyrics lines should not be empty");
+        assert!(
+            lyrics.lines.iter().any(|l| l.text.contains("Liệu nắng có khiến em quay về")),
+            "Should contain signature lyric line"
+        );
     }
 }
 

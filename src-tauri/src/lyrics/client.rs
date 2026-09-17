@@ -2,10 +2,9 @@ use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use super::models::{LrclibResponse, NormalizedLyricLine, NormalizedLyrics, PreloadRequest, SyncType, TrackPreloadItem};
+use super::models::{LrclibResponse, NormalizedLyricLine, NormalizedLyrics, SyncType};
 
-const CUSTOM_API_BASE: &str = "http://100.73.90.79:8765";
-const USER_AGENT_VAL: &str = "NetSpeedDynamic/1.0";
+const USER_AGENT_VAL: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -18,61 +17,15 @@ fn get_client() -> reqwest::Client {
             }
             reqwest::Client::builder()
                 .default_headers(headers)
-                .timeout(Duration::from_secs(3))
+                .timeout(Duration::from_secs(5))
                 .build()
                 .unwrap_or_default()
         })
         .clone()
 }
 
-/// 1. Gọi đến máy chủ AI Lyric Alignment của bạn (100.73.90.79)
-pub async fn fetch_from_custom_server(
-    title: &str,
-    artist: &str,
-    duration_ms: i64,
-) -> Result<Option<NormalizedLyrics>, String> {
-    let client = get_client();
-    let url = format!(
-        "{}/api/lyrics?title={}&artist={}&duration_ms={}",
-        CUSTOM_API_BASE,
-        urlencoding::encode(title),
-        urlencoding::encode(artist),
-        duration_ms
-    );
-
-    let resp = match client.get(&url).send().await {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Custom server connect error: {}", e)),
-    };
-
-    if !resp.status().is_success() {
-        return Ok(None);
-    }
-
-    match resp.json::<NormalizedLyrics>().await {
-        Ok(data) => {
-            if data.sync_type != SyncType::None && !data.lines.is_empty() {
-                Ok(Some(data))
-            } else {
-                Ok(None)
-            }
-        }
-        Err(e) => Err(format!("Failed to parse custom server response: {}", e)),
-    }
-}
-
-/// 2. Gửi danh sách 5 bài tiếp theo trong playlist để pre-gen
-pub async fn send_preload_queue(tracks: Vec<TrackPreloadItem>) -> Result<(), String> {
-    let client = get_client();
-    let url = format!("{}/api/queue/preload", CUSTOM_API_BASE);
-
-    let payload = PreloadRequest { tracks };
-    let _ = client.post(&url).json(&payload).send().await;
-    Ok(())
-}
-
-/// 3. Fallback trực tiếp về LRCLIB nếu máy chủ AI offline hoặc chưa có lyric
-pub async fn fetch_from_lrclib_fallback(
+/// 1. Tìm và lấy lời bài hát có timestamp từ LRCLIB
+pub async fn fetch_from_lrclib(
     title: &str,
     artist: &str,
     duration_sec: i64,
@@ -113,6 +66,162 @@ pub async fn fetch_from_lrclib_fallback(
 
     let data: LrclibResponse = resp.json().await.map_err(|e| e.to_string())?;
     Ok(parse_lrclib_response(data, title, artist, duration_sec * 1000))
+}
+
+/// 2. Fallback trực tuyến: Lấy lời từ YouTube Music (LyricFind qua InnerTube API)
+pub async fn fetch_from_ytmusic_fallback(
+    title: &str,
+    artist: &str,
+    duration_ms: i64,
+) -> Result<Option<NormalizedLyrics>, String> {
+    let client = get_client();
+    let query = format!("{} {}", title, artist).trim().to_string();
+
+    // 1. Tìm videoId trên YouTube Music
+    let search_url = "https://music.youtube.com/youtubei/v1/search";
+    let search_payload = serde_json::json!({
+        "context": {
+            "client": {
+                "clientName": "WEB_REMIX",
+                "clientVersion": "1.20240101.01.00"
+            }
+        },
+        "query": query
+    });
+
+    let search_res = client
+        .post(search_url)
+        .json(&search_payload)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !search_res.status().is_success() {
+        return Ok(None);
+    }
+
+    let search_text = search_res.text().await.map_err(|e| e.to_string())?;
+
+    let mut candidate_ids: Vec<String> = Vec::new();
+    let pattern = "\"videoId\": \"";
+    let pattern2 = "\"videoId\":\"";
+    for pat in [pattern, pattern2] {
+        for part in search_text.split(pat).skip(1) {
+            if let Some(end) = part.find('"') {
+                let vid = &part[..end];
+                if vid.len() == 11 && !candidate_ids.contains(&vid.to_string()) {
+                    candidate_ids.push(vid.to_string());
+                    if candidate_ids.len() >= 6 {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Với mỗi candidate, kiểm tra endpoint Next để lấy browseId của tab Lyrics (MPLYt...)
+    for video_id in candidate_ids {
+        let next_url = "https://music.youtube.com/youtubei/v1/next";
+        let next_payload = serde_json::json!({
+            "context": {
+                "client": {
+                    "clientName": "WEB_REMIX",
+                    "clientVersion": "1.20240101.01.00"
+                }
+            },
+            "videoId": video_id
+        });
+
+        let next_res = match client.post(next_url).json(&next_payload).send().await {
+            Ok(r) if r.status().is_success() => r,
+            _ => continue,
+        };
+
+        let next_text = match next_res.text().await {
+            Ok(t) => t,
+            _ => continue,
+        };
+
+        let browse_prefix = "MPLYt";
+        let browse_id = match next_text.find(browse_prefix) {
+            Some(idx) => {
+                let slice = &next_text[idx..];
+                let end = slice
+                    .find(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+                    .unwrap_or(slice.len());
+                &slice[..end]
+            }
+            None => continue,
+        };
+
+        // 3. Tải lời bài hát từ tab Browse
+        let browse_url = "https://music.youtube.com/youtubei/v1/browse";
+        let browse_payload = serde_json::json!({
+            "context": {
+                "client": {
+                    "clientName": "WEB_REMIX",
+                    "clientVersion": "1.20240101.01.00"
+                }
+            },
+            "browseId": browse_id
+        });
+
+        let browse_res = match client.post(browse_url).json(&browse_payload).send().await {
+            Ok(r) if r.status().is_success() => r,
+            _ => continue,
+        };
+
+        let browse_json: serde_json::Value = match browse_res.json().await {
+            Ok(v) => v,
+            _ => continue,
+        };
+
+        let section = &browse_json["contents"]["sectionListRenderer"]["contents"][0]["musicDescriptionShelfRenderer"];
+        let mut lyrics_str = String::new();
+        if let Some(runs) = section["description"]["runs"].as_array() {
+            for r in runs {
+                if let Some(txt) = r["text"].as_str() {
+                    lyrics_str.push_str(txt);
+                }
+            }
+        }
+
+        let lyrics_trimmed = lyrics_str.trim();
+        if !lyrics_trimmed.is_empty() {
+            let lines: Vec<NormalizedLyricLine> = lyrics_trimmed
+                .split('\n')
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .map(|text| NormalizedLyricLine {
+                    text,
+                    start_ms: 0,
+                    end_ms: 0,
+                    words: None,
+                })
+                .collect();
+
+            if !lines.is_empty() {
+                let track_key = format!(
+                    "{}::{}::{}",
+                    artist.to_lowercase(),
+                    title.to_lowercase(),
+                    duration_ms / 1000
+                );
+                return Ok(Some(NormalizedLyrics {
+                    track_key,
+                    source: "youtube_music".to_string(),
+                    fetched_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                    sync_type: SyncType::Plain,
+                    lines,
+                }));
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 fn parse_lrclib_response(
@@ -168,7 +277,7 @@ fn parse_lrclib_response(
     let track_key = format!("{}::{}::{}", artist.to_lowercase(), title.to_lowercase(), duration_ms / 1000);
     Some(NormalizedLyrics {
         track_key,
-        source: "lrclib_fallback".to_string(),
+        source: "lrclib".to_string(),
         fetched_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
