@@ -24,7 +24,7 @@ fn get_client() -> reqwest::Client {
         .clone()
 }
 
-/// 1. Tìm và lấy lời bài hát có timestamp từ LRCLIB
+/// 1. Tìm và lấy lời bài hát có timestamp từ LRCLIB (chỉ chấp nhận synced lyrics có timestamp)
 pub async fn fetch_from_lrclib(
     title: &str,
     artist: &str,
@@ -53,8 +53,10 @@ pub async fn fetch_from_lrclib(
                 return Ok(None);
             }
             let items: Vec<LrclibResponse> = search_resp.json().await.map_err(|e| e.to_string())?;
-            if let Some(first) = items.into_iter().next() {
-                return Ok(parse_lrclib_response(first, title, artist, duration_sec * 1000));
+            for item in items {
+                if let Some(lyrics) = parse_lrclib_synced_response(item, title, artist, duration_sec * 1000) {
+                    return Ok(Some(lyrics));
+                }
             }
             return Ok(None);
         }
@@ -65,11 +67,11 @@ pub async fn fetch_from_lrclib(
     }
 
     let data: LrclibResponse = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(parse_lrclib_response(data, title, artist, duration_sec * 1000))
+    Ok(parse_lrclib_synced_response(data, title, artist, duration_sec * 1000))
 }
 
-/// 2. Fallback trực tuyến: Lấy lời từ YouTube Music (LyricFind qua InnerTube API)
-pub async fn fetch_from_ytmusic_fallback(
+/// 2. Fallback sang NetEase Music API (cung cấp file LRC đầy đủ mốc thời gian [mm:ss.xx])
+pub async fn fetch_from_netease_fallback(
     title: &str,
     artist: &str,
     duration_ms: i64,
@@ -77,146 +79,52 @@ pub async fn fetch_from_ytmusic_fallback(
     let client = get_client();
     let query = format!("{} {}", title, artist).trim().to_string();
 
-    // 1. Tìm videoId trên YouTube Music
-    let search_url = "https://music.youtube.com/youtubei/v1/search";
-    let search_payload = serde_json::json!({
-        "context": {
-            "client": {
-                "clientName": "WEB_REMIX",
-                "clientVersion": "1.20240101.01.00"
-            }
-        },
-        "query": query
-    });
+    // 1. Tìm kiếm danh sách bài hát
+    let search_url = format!(
+        "http://music.163.com/api/search/get?s={}&type=1&limit=6",
+        urlencoding::encode(&query)
+    );
 
-    let search_res = client
-        .post(search_url)
-        .json(&search_payload)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let search_res = match client.get(&search_url).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Ok(None),
+    };
 
-    if !search_res.status().is_success() {
-        return Ok(None);
-    }
+    let search_json: serde_json::Value = match search_res.json().await {
+        Ok(v) => v,
+        _ => return Ok(None),
+    };
 
-    let search_text = search_res.text().await.map_err(|e| e.to_string())?;
+    let songs = match search_json["result"]["songs"].as_array() {
+        Some(s) if !s.is_empty() => s,
+        _ => return Ok(None),
+    };
 
-    let mut candidate_ids: Vec<String> = Vec::new();
-    let pattern = "\"videoId\": \"";
-    let pattern2 = "\"videoId\":\"";
-    for pat in [pattern, pattern2] {
-        for part in search_text.split(pat).skip(1) {
-            if let Some(end) = part.find('"') {
-                let vid = &part[..end];
-                if vid.len() == 11 && !candidate_ids.contains(&vid.to_string()) {
-                    candidate_ids.push(vid.to_string());
-                    if candidate_ids.len() >= 6 {
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. Với mỗi candidate, kiểm tra endpoint Next để lấy browseId của tab Lyrics (MPLYt...)
-    for video_id in candidate_ids {
-        let next_url = "https://music.youtube.com/youtubei/v1/next";
-        let next_payload = serde_json::json!({
-            "context": {
-                "client": {
-                    "clientName": "WEB_REMIX",
-                    "clientVersion": "1.20240101.01.00"
-                }
-            },
-            "videoId": video_id
-        });
-
-        let next_res = match client.post(next_url).json(&next_payload).send().await {
-            Ok(r) if r.status().is_success() => r,
-            _ => continue,
-        };
-
-        let next_text = match next_res.text().await {
-            Ok(t) => t,
-            _ => continue,
-        };
-
-        let browse_prefix = "MPLYt";
-        let browse_id = match next_text.find(browse_prefix) {
-            Some(idx) => {
-                let slice = &next_text[idx..];
-                let end = slice
-                    .find(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
-                    .unwrap_or(slice.len());
-                &slice[..end]
-            }
+    // 2. Duyệt qua các kết quả để lấy file LRC có timestamp
+    for song in songs {
+        let song_id = match song["id"].as_i64() {
+            Some(id) => id,
             None => continue,
         };
 
-        // 3. Tải lời bài hát từ tab Browse
-        let browse_url = "https://music.youtube.com/youtubei/v1/browse";
-        let browse_payload = serde_json::json!({
-            "context": {
-                "client": {
-                    "clientName": "WEB_REMIX",
-                    "clientVersion": "1.20240101.01.00"
-                }
-            },
-            "browseId": browse_id
-        });
+        let lyric_url = format!(
+            "http://music.163.com/api/song/lyric?id={}&lv=1&kv=1&tv=-1",
+            song_id
+        );
 
-        let browse_res = match client.post(browse_url).json(&browse_payload).send().await {
+        let lyric_res = match client.get(&lyric_url).send().await {
             Ok(r) if r.status().is_success() => r,
             _ => continue,
         };
 
-        let browse_json: serde_json::Value = match browse_res.json().await {
+        let lyric_json: serde_json::Value = match lyric_res.json().await {
             Ok(v) => v,
             _ => continue,
         };
 
-        let section = &browse_json["contents"]["sectionListRenderer"]["contents"][0]["musicDescriptionShelfRenderer"];
-        let mut lyrics_str = String::new();
-        if let Some(runs) = section["description"]["runs"].as_array() {
-            for r in runs {
-                if let Some(txt) = r["text"].as_str() {
-                    lyrics_str.push_str(txt);
-                }
-            }
-        }
-
-        let lyrics_trimmed = lyrics_str.trim();
-        if !lyrics_trimmed.is_empty() {
-            let lines: Vec<NormalizedLyricLine> = lyrics_trimmed
-                .split('\n')
-                .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty())
-                .map(|text| NormalizedLyricLine {
-                    text,
-                    start_ms: 0,
-                    end_ms: 0,
-                    words: None,
-                })
-                .collect();
-
-            if !lines.is_empty() {
-                let track_key = format!(
-                    "{}::{}::{}",
-                    artist.to_lowercase(),
-                    title.to_lowercase(),
-                    duration_ms / 1000
-                );
-                return Ok(Some(NormalizedLyrics {
-                    track_key,
-                    source: "youtube_music".to_string(),
-                    fetched_at: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64,
-                    sync_type: SyncType::Plain,
-                    lines,
-                }));
+        if let Some(lrc_text) = lyric_json["lrc"]["lyric"].as_str() {
+            if let Some(lyrics) = parse_lrc_string(lrc_text, title, artist, duration_ms, "netease") {
+                return Ok(Some(lyrics));
             }
         }
     }
@@ -224,67 +132,96 @@ pub async fn fetch_from_ytmusic_fallback(
     Ok(None)
 }
 
-fn parse_lrclib_response(
-    data: LrclibResponse,
+/// Parse chuỗi chuẩn LRC chứa các mốc thời gian [mm:ss.xx] thành NormalizedLyrics
+pub fn parse_lrc_string(
+    raw_text: &str,
     title: &str,
     artist: &str,
     duration_ms: i64,
+    source: &str,
 ) -> Option<NormalizedLyrics> {
-    let raw_text = data.synced_lyrics.or(data.plain_lyrics)?;
-    let mut lines: Vec<NormalizedLyricLine> = Vec::new();
+    let raw_lines: Vec<&str> = raw_text
+        .split('\n')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
 
-    let mut is_synced = false;
-    let raw_lines: Vec<&str> = raw_text.split('\n').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let mut timed_lines: Vec<(i64, String)> = Vec::new();
 
-    for (i, line_str) in raw_lines.iter().enumerate() {
+    for line_str in raw_lines {
+        // Kiểm tra xem dòng có định dạng [mm:ss.xx] không
         if line_str.starts_with('[') && line_str.contains(']') {
             let parts: Vec<&str> = line_str.splitn(2, ']').collect();
             if parts.len() == 2 {
                 let time_part = &parts[0][1..];
                 let text = parts[1].trim().to_string();
-                if let Some(start_ms) = parse_lrc_time(time_part) {
-                    is_synced = true;
-                    let next_start = raw_lines.get(i + 1).and_then(|nl| {
-                        if nl.starts_with('[') && nl.contains(']') {
-                            let np: Vec<&str> = nl.splitn(2, ']').collect();
-                            parse_lrc_time(&np[0][1..])
-                        } else {
-                            None
-                        }
-                    });
 
-                    let end_ms = next_start.unwrap_or(start_ms + 4000);
-                    lines.push(NormalizedLyricLine {
-                        text,
-                        start_ms,
-                        end_ms,
-                        words: None,
-                    });
-                    continue;
+                // Bỏ qua các thẻ metadata LRC như [ti:...], [ar:...], [al:...], [by:...]
+                if let Some(start_ms) = parse_lrc_time(time_part) {
+                    // Bỏ qua dòng rỗng hoặc chỉ chứa nhãn phân đoạn không phải lời hát
+                    if !text.is_empty() && !is_section_header_label(&text) {
+                        timed_lines.push((start_ms, text));
+                    }
                 }
             }
         }
+    }
 
-        // Plain line fallback
+    // Yêu cầu bắt buộc: Phải có ít nhất các dòng có mốc thời gian thực sự
+    if timed_lines.is_empty() {
+        return None;
+    }
+
+    // Sắp xếp các dòng theo thứ tự thời gian start_ms
+    timed_lines.sort_by_key(|(start, _)| *start);
+
+    let total = timed_lines.len();
+    let mut lines: Vec<NormalizedLyricLine> = Vec::with_capacity(total);
+
+    for (i, (start_ms, text)) in timed_lines.iter().enumerate() {
+        let next_start = if i + 1 < total {
+            Some(timed_lines[i + 1].0)
+        } else {
+            None
+        };
+
+        let end_ms = next_start.unwrap_or(start_ms + 4000);
         lines.push(NormalizedLyricLine {
-            text: line_str.to_string(),
-            start_ms: 0,
-            end_ms: 0,
+            text: text.clone(),
+            start_ms: *start_ms,
+            end_ms: end_ms.max(*start_ms + 500),
             words: None,
         });
     }
 
-    let track_key = format!("{}::{}::{}", artist.to_lowercase(), title.to_lowercase(), duration_ms / 1000);
+    let track_key = format!(
+        "{}::{}::{}",
+        artist.to_lowercase(),
+        title.to_lowercase(),
+        duration_ms / 1000
+    );
+
     Some(NormalizedLyrics {
         track_key,
-        source: "lrclib".to_string(),
+        source: source.to_string(),
         fetched_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64,
-        sync_type: if is_synced { SyncType::Line } else { SyncType::Plain },
+        sync_type: SyncType::Line,
         lines,
     })
+}
+
+fn parse_lrclib_synced_response(
+    data: LrclibResponse,
+    title: &str,
+    artist: &str,
+    duration_ms: i64,
+) -> Option<NormalizedLyrics> {
+    // Chỉ chấp nhận synced_lyrics có mốc thời gian, từ chối plain_lyrics
+    let synced_text = data.synced_lyrics?;
+    parse_lrc_string(&synced_text, title, artist, duration_ms, "lrclib")
 }
 
 fn parse_lrc_time(time_str: &str) -> Option<i64> {
@@ -295,4 +232,22 @@ fn parse_lrc_time(time_str: &str) -> Option<i64> {
     let mins: f64 = parts[0].parse().ok()?;
     let secs: f64 = parts[1].parse().ok()?;
     Some(((mins * 60.0 + secs) * 1000.0) as i64)
+}
+
+fn is_section_header_label(text: &str) -> bool {
+    let trimmed = text.trim();
+    let lower = trimmed.to_lowercase();
+    lower == "điệp khúc："
+        || lower == "điệp khúc:"
+        || lower == "giai đoạn hai："
+        || lower == "giai đoạn hai:"
+        || lower == "đảo ngược góc nhìn："
+        || lower == "đảo ngược góc nhìn:"
+        || lower == "kết thúc："
+        || lower == "kết thúc:"
+        || lower == "intro"
+        || lower == "outro"
+        || lower == "chorus"
+        || lower == "verse 1"
+        || lower == "verse 2"
 }

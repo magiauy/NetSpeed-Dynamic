@@ -60,6 +60,7 @@ pub struct PreloadRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct LrclibResponse {
     #[serde(rename = "plainLyrics")]
+    #[allow(dead_code)]
     pub plain_lyrics: Option<String>,
     #[serde(rename = "syncedLyrics")]
     pub synced_lyrics: Option<String>,

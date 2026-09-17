@@ -223,20 +223,20 @@ pub async fn fetch_normalized_lyrics(
         duration_ms / 1000
     );
 
-    // 1. Thử lấy từ LRCLIB trực tuyến (Synced LRC lines)
+    // 1. Thử lấy từ LRCLIB trực tuyến (Synced LRC lines có timestamp [mm:ss.xx])
     if let Ok(Some(lrclib_lyrics)) = client::fetch_from_lrclib(&clean_song, &clean_artist, duration_ms / 1000).await {
-        println!("[Lyrics] LRCLIB Success: {}", track_key);
+        println!("[Lyrics] LRCLIB Success (Synced Line): {}", track_key);
         return Ok(lrclib_lyrics);
     }
 
-    // 2. Fallback sang YouTube Music / LyricFind
-    println!("[Lyrics] LRCLIB unavailable or missing. Falling back to YouTube Music...");
-    if let Ok(Some(yt_lyrics)) = client::fetch_from_ytmusic_fallback(&clean_song, &clean_artist, duration_ms).await {
-        println!("[Lyrics] YouTube Music Fallback Success: {}", track_key);
-        return Ok(yt_lyrics);
+    // 2. Fallback sang NetEase Music API (File LRC có đầy đủ timestamp [mm:ss.xx] cho từng câu)
+    println!("[Lyrics] LRCLIB unavailable or missing. Falling back to NetEase LRC...");
+    if let Ok(Some(netease_lyrics)) = client::fetch_from_netease_fallback(&clean_song, &clean_artist, duration_ms).await {
+        println!("[Lyrics] NetEase LRC Fallback Success (Synced Line): {}", track_key);
+        return Ok(netease_lyrics);
     }
 
-    // 3. Trả về rỗng nếu không tìm thấy
+    // 3. Trả về rỗng nếu không tìm thấy lời có timestamp
     let empty = NormalizedLyrics {
         track_key: track_key.clone(),
         source: "not_found".to_string(),
@@ -316,21 +316,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_nang_co_mang_em_ve() {
+    async fn test_fetch_nang_co_mang_em_ve_synced_lrc() {
         let lyrics = fetch_normalized_lyrics(
             "Nắng có mang em về".to_string(),
             "Shartnuss".to_string(),
             None,
-            322000,
+            254000,
         )
         .await
         .unwrap();
 
         assert!(!lyrics.lines.is_empty(), "Lyrics lines should not be empty");
-        assert!(
-            lyrics.lines.iter().any(|l| l.text.contains("Liệu nắng có khiến em quay về")),
-            "Should contain signature lyric line"
-        );
+        assert_eq!(lyrics.sync_type, SyncType::Line, "Must be synced line lyrics");
+        // Verify every line has valid positive timestamp and duration
+        for line in &lyrics.lines {
+            assert!(line.start_ms >= 0, "Line start timestamp must be non-negative");
+            assert!(line.end_ms > line.start_ms, "Line end timestamp must be greater than start");
+        }
+
+        // Verify signature line with its timestamp
+        let found = lyrics.lines.iter().find(|l| l.text.contains("Liệu nắng có khiến em quay về"));
+        assert!(found.is_some(), "Should contain signature lyric line");
+        let sig = found.unwrap();
+        assert!(sig.start_ms > 10000 && sig.start_ms < 20000, "First line starts around 13s, got {}ms", sig.start_ms);
     }
 }
 
