@@ -755,6 +755,11 @@ interface AiQuotaPayload {
     codex?: ProviderQuota;
     antigravity?: ProviderQuota;
     active_window_is_ide: boolean;
+    ide_is_open?: boolean;
+    codex_is_open?: boolean;
+    antigravity_is_open?: boolean;
+    active_window_is_codex?: boolean;
+    active_window_is_antigravity?: boolean;
     active_app_name?: string;
     timestamp: number;
 }

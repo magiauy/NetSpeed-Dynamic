@@ -2198,6 +2198,10 @@ interface AiQuotaPayload {
     antigravity?: ProviderQuota | null;
     active_window_is_ide: boolean;
     ide_is_open?: boolean;
+    codex_is_open?: boolean;
+    antigravity_is_open?: boolean;
+    active_window_is_codex?: boolean;
+    active_window_is_antigravity?: boolean;
     active_app_name?: string | null;
     timestamp: number;
 }
@@ -2226,6 +2230,36 @@ const isCodexActive = computed(() => {
 const isAgyActive = computed(() => {
     if (agyActivity.value) {
         return agyActivity.value.state === 'thinking' || agyActivity.value.state === 'executing';
+    }
+    return false;
+});
+
+const isRelevantAiActive = computed(() => {
+    return (enableCodexQuota.value && isCodexActive.value) || (enableAntigravityQuota.value && isAgyActive.value);
+});
+
+const isRelevantIdeOpen = computed(() => {
+    if (enableCodexQuota.value && enableAntigravityQuota.value) {
+        return !!(aiQuotaData.value?.ide_is_open || aiQuotaData.value?.codex_is_open || aiQuotaData.value?.antigravity_is_open);
+    }
+    if (enableCodexQuota.value) {
+        return !!aiQuotaData.value?.codex_is_open;
+    }
+    if (enableAntigravityQuota.value) {
+        return !!aiQuotaData.value?.antigravity_is_open;
+    }
+    return false;
+});
+
+const isRelevantIdeFocused = computed(() => {
+    if (enableCodexQuota.value && enableAntigravityQuota.value) {
+        return !!(aiQuotaData.value?.active_window_is_ide || aiQuotaData.value?.active_window_is_codex || aiQuotaData.value?.active_window_is_antigravity);
+    }
+    if (enableCodexQuota.value) {
+        return !!aiQuotaData.value?.active_window_is_codex;
+    }
+    if (enableAntigravityQuota.value) {
+        return !!aiQuotaData.value?.active_window_is_antigravity;
     }
     return false;
 });
@@ -2307,7 +2341,7 @@ const currentAiActivityState = computed<'idle' | 'thinking' | 'executing' | 'wai
         }
         return 'executing';
     }
-    if (isCodexActive.value || isAgyActive.value) {
+    if (isRelevantAiActive.value) {
         return 'thinking';
     }
     return 'idle';
@@ -2384,17 +2418,17 @@ const displayAiQuota = computed(() => {
     if (!enableCodexQuota.value && !enableAntigravityQuota.value) {
         return false;
     }
-    if (isCodexActive.value || isAgyActive.value) {
+    if (isRelevantAiActive.value) {
         return true;
     }
     if (quotaDisplayMode.value === 'always') {
         return true;
     }
     if (quotaDisplayMode.value === 'open') {
-        return !!(aiQuotaData.value?.ide_is_open || aiQuotaData.value?.active_window_is_ide);
+        return isRelevantIdeOpen.value || isRelevantIdeFocused.value;
     }
     if (quotaDisplayMode.value === 'auto') {
-        return !!aiQuotaData.value?.active_window_is_ide;
+        return isRelevantIdeFocused.value;
     }
     return false;
 });
@@ -2476,7 +2510,7 @@ const displayMusic = computed(() => !isMsgActive.value && !displaySongChangeBann
 
 // 智能判断静默模式下是否该显示：有消息、有系统提示、剪贴板链接通知，或开启了音乐控制且正在播放，或开启了AI Quota且活跃
 const shouldShowInQuietMode = computed(() =>
-    isMsgActive.value || displayActivity.value || displaySongChangeBanner.value || displaySysToast.value || displayClipboard.value || (isMusicCtlEnabled.value && hasActiveSong.value) || (enableAiQuota.value && (quotaDisplayMode.value === 'always' || (quotaDisplayMode.value === 'open' ? (aiQuotaData.value?.ide_is_open || aiQuotaData.value?.active_window_is_ide) : !!aiQuotaData.value?.active_window_is_ide)))
+    isMsgActive.value || displayActivity.value || displaySongChangeBanner.value || displaySysToast.value || displayClipboard.value || (isMusicCtlEnabled.value && hasActiveSong.value) || (enableAiQuota.value && (isRelevantAiActive.value || quotaDisplayMode.value === 'always' || (quotaDisplayMode.value === 'open' ? (isRelevantIdeOpen.value || isRelevantIdeFocused.value) : isRelevantIdeFocused.value)))
 );
 watch(shouldShowInQuietMode, async (newVal) => {
     if (isMsgModeEnabled.value) {

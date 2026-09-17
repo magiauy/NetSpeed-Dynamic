@@ -38,6 +38,14 @@ pub struct AiQuotaPayload {
     pub antigravity: Option<ProviderQuota>,
     pub active_window_is_ide: bool,
     pub ide_is_open: bool,
+    #[serde(default)]
+    pub codex_is_open: bool,
+    #[serde(default)]
+    pub antigravity_is_open: bool,
+    #[serde(default)]
+    pub active_window_is_codex: bool,
+    #[serde(default)]
+    pub active_window_is_antigravity: bool,
     pub active_app_name: Option<String>,
     pub timestamp: i64,
 }
@@ -707,37 +715,71 @@ async fn fetch_antigravity_quota(sys: &mut System) -> ProviderQuota {
     }
 }
 
-/// Kiểm tra xem cửa sổ Foreground (active) hiện tại có phải là VS Code / Codex / IDE không
 #[cfg(target_os = "windows")]
-fn check_active_window_is_ide() -> (bool, Option<String>) {
-    use winapi::shared::minwindef::{FALSE, TRUE};
+fn is_real_window(hwnd: winapi::shared::windef::HWND) -> bool {
+    use winapi::um::dwmapi::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+    use winapi::um::winuser::{
+        GetWindowLongW, GetWindowTextLengthW, IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
+    };
+
+    unsafe {
+        if IsWindowVisible(hwnd) == 0 {
+            return false;
+        }
+
+        let len = GetWindowTextLengthW(hwnd);
+        if len == 0 {
+            return false;
+        }
+
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        if (ex_style & (WS_EX_TOOLWINDOW as i32)) != 0 {
+            return false;
+        }
+
+        let mut cloaked: u32 = 0;
+        let res = DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut _ as *mut winapi::ctypes::c_void,
+            std::mem::size_of::<u32>() as u32,
+        );
+        if res == 0 && cloaked != 0 {
+            return false;
+        }
+
+        true
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_window_process_name(hwnd: winapi::shared::windef::HWND) -> (Option<String>, String) {
+    use winapi::shared::minwindef::FALSE;
     use winapi::um::handleapi::CloseHandle;
     use winapi::um::processthreadsapi::OpenProcess;
     use winapi::um::winbase::QueryFullProcessImageNameW;
     use winapi::um::winnt::PROCESS_QUERY_LIMITED_INFORMATION;
-    use winapi::um::winuser::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
+    use winapi::um::winuser::{GetWindowTextW, GetWindowThreadProcessId};
 
+    let mut pid: u32 = 0;
     unsafe {
-        let hwnd = GetForegroundWindow();
-        if hwnd.is_null() {
-            return (false, None);
-        }
-
-        let mut pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, &mut pid);
         if pid == 0 {
-            return (false, None);
+            return (None, String::new());
         }
 
-        let mut process_name = String::new();
+        let mut process_name = None;
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
         if !process.is_null() {
             let mut path_buf = [0u16; 1024];
             let mut path_len = path_buf.len() as u32;
             let ok = QueryFullProcessImageNameW(process, 0, path_buf.as_mut_ptr(), &mut path_len);
             CloseHandle(process);
-            if ok == TRUE {
-                process_name = String::from_utf16_lossy(&path_buf[..path_len as usize]).to_lowercase();
+            if ok != 0 && path_len > 0 {
+                let full_path = String::from_utf16_lossy(&path_buf[..path_len as usize]).to_lowercase();
+                if let Some(filename) = full_path.rsplit('\\').next() {
+                    process_name = Some(filename.to_string());
+                }
             }
         }
 
@@ -749,87 +791,99 @@ fn check_active_window_is_ide() -> (bool, Option<String>) {
             String::new()
         };
 
-        let is_ide = process_name.ends_with("code.exe")
-            || process_name.ends_with("cursor.exe")
-            || process_name.ends_with("windsurf.exe")
-            || process_name.ends_with("codex.exe")
-            || process_name.ends_with("vscodium.exe")
-            || process_name.ends_with("antigravity.exe")
-            || process_name.ends_with("devenv.exe")
-            || title.contains("visual studio code")
-            || title.contains("cursor")
-            || title.contains("windsurf")
-            || title.contains("antigravity")
-            || title.contains("codex");
+        (process_name, title)
+    }
+}
 
-        let app_name = if process_name.ends_with("code.exe") {
-            Some("VS Code".to_string())
-        } else if process_name.ends_with("cursor.exe") {
-            Some("Cursor".to_string())
-        } else if process_name.ends_with("windsurf.exe") {
-            Some("Windsurf".to_string())
-        } else if process_name.ends_with("codex.exe") {
-            Some("Codex".to_string())
-        } else if process_name.ends_with("antigravity.exe") {
-            Some("Antigravity".to_string())
-        } else {
-            None
-        };
+fn classify_app(proc_name_opt: &Option<String>, _title: &str) -> (bool, bool, Option<String>) {
+    let proc = proc_name_opt.as_deref().unwrap_or("");
 
-        (is_ide, app_name)
+    // Codex / VS Code / IDE targets
+    if proc == "code.exe" || proc == "vscodium.exe" {
+        return (true, false, Some("VS Code".to_string()));
+    }
+    if proc == "cursor.exe" {
+        return (true, false, Some("Cursor".to_string()));
+    }
+    if proc == "windsurf.exe" {
+        return (true, false, Some("Windsurf".to_string()));
+    }
+    if proc == "chatgpt.exe" {
+        return (true, false, Some("ChatGPT".to_string()));
+    }
+    if proc == "codex.exe" {
+        return (true, false, Some("Codex".to_string()));
+    }
+    if proc == "devenv.exe" {
+        return (true, false, Some("Visual Studio".to_string()));
+    }
+
+    // Antigravity targets
+    if proc == "antigravity.exe" {
+        return (false, true, Some("Antigravity".to_string()));
+    }
+    if proc == "agy.exe" || proc == "antigravity-cli.exe" {
+        return (false, true, Some("Antigravity CLI".to_string()));
+    }
+
+    (false, false, None)
+}
+
+/// Kiểm tra xem cửa sổ Foreground (active) hiện tại có phải là VS Code / Codex / Antigravity không
+#[cfg(target_os = "windows")]
+fn check_active_window_is_ide() -> (bool, bool, bool, Option<String>) {
+    use winapi::um::winuser::GetForegroundWindow;
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() || !is_real_window(hwnd) {
+            return (false, false, false, None);
+        }
+        let (proc_opt, title) = get_window_process_name(hwnd);
+        let (is_codex, is_agy, app_name) = classify_app(&proc_opt, &title);
+        (is_codex || is_agy, is_codex, is_agy, app_name)
     }
 }
 
 /// Kiểm tra xem có bất kỳ cửa sổ / tiến trình VS Code / Codex / Antigravity nào đang mở trên hệ thống không
 #[cfg(target_os = "windows")]
-fn check_ide_is_open() -> (bool, Option<String>) {
+fn check_ide_is_open() -> (bool, bool, bool, Option<String>) {
     use winapi::shared::minwindef::{BOOL, LPARAM, TRUE};
     use winapi::shared::windef::HWND;
-    use winapi::um::winuser::{EnumWindows, GetWindowTextLengthW, GetWindowTextW, IsWindowVisible};
+    use winapi::um::winuser::EnumWindows;
 
     struct WindowSearchData {
-        found: bool,
+        codex_open: bool,
+        agy_open: bool,
         app_name: Option<String>,
     }
 
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let data = &mut *(lparam as *mut WindowSearchData);
-        if IsWindowVisible(hwnd) != 0 {
-            let len = GetWindowTextLengthW(hwnd);
-            if len > 0 && len < 1024 {
-                let mut buf = vec![0u16; (len + 1) as usize];
-                let n = GetWindowTextW(hwnd, buf.as_mut_ptr(), (len + 1) as i32);
-                if n > 0 {
-                    let title = String::from_utf16_lossy(&buf[..n as usize]).to_lowercase();
-                    if title.contains("visual studio code") || title.ends_with(" - code") || title == "code" {
-                        data.found = true;
-                        data.app_name = Some("VS Code".to_string());
-                        return 0; // stop enum
-                    } else if title.contains("codex") {
-                        data.found = true;
-                        data.app_name = Some("Codex".to_string());
-                        return 0;
-                    } else if title.contains("cursor") {
-                        data.found = true;
-                        data.app_name = Some("Cursor".to_string());
-                        return 0;
-                    } else if title.contains("antigravity") {
-                        data.found = true;
-                        data.app_name = Some("Antigravity".to_string());
-                        return 0;
-                    } else if title.contains("windsurf") {
-                        data.found = true;
-                        data.app_name = Some("Windsurf".to_string());
-                        return 0;
-                    }
+        if is_real_window(hwnd) {
+            let (proc_opt, title) = get_window_process_name(hwnd);
+            let (is_codex, is_agy, app_name) = classify_app(&proc_opt, &title);
+            if is_codex {
+                data.codex_open = true;
+                if data.app_name.is_none() {
+                    data.app_name = app_name.clone();
                 }
+            }
+            if is_agy {
+                data.agy_open = true;
+                if data.app_name.is_none() {
+                    data.app_name = app_name;
+                }
+            }
+            if data.codex_open && data.agy_open {
+                return 0; // stop enum early
             }
         }
         TRUE
     }
 
     let mut data = WindowSearchData {
-        found: false,
+        codex_open: false,
+        agy_open: false,
         app_name: None,
     };
 
@@ -837,21 +891,22 @@ fn check_ide_is_open() -> (bool, Option<String>) {
         EnumWindows(Some(enum_proc), &mut data as *mut _ as LPARAM);
     }
 
-    if data.found {
-        (true, data.app_name)
-    } else {
-        check_active_window_is_ide()
-    }
+    (
+        data.codex_open || data.agy_open,
+        data.codex_open,
+        data.agy_open,
+        data.app_name,
+    )
 }
 
 #[cfg(not(target_os = "windows"))]
-fn check_active_window_is_ide() -> (bool, Option<String>) {
-    (false, None)
+fn check_active_window_is_ide() -> (bool, bool, bool, Option<String>) {
+    (false, false, false, None)
 }
 
 #[cfg(not(target_os = "windows"))]
-fn check_ide_is_open() -> (bool, Option<String>) {
-    (false, None)
+fn check_ide_is_open() -> (bool, bool, bool, Option<String>) {
+    (false, false, false, None)
 }
 
 /// Fetch toàn bộ dữ liệu Quota theo cấu hình
@@ -877,8 +932,8 @@ pub async fn fetch_all_quota_data() -> AiQuotaPayload {
 
     let (codex_quota, antigravity_quota) = tokio::join!(codex_fut, antigravity_fut);
 
-    let (active_is_ide, active_app) = check_active_window_is_ide();
-    let (ide_open, open_app) = check_ide_is_open();
+    let (active_is_ide, active_is_codex, active_is_agy, active_app) = check_active_window_is_ide();
+    let (ide_open, codex_open, agy_open, open_app) = check_ide_is_open();
     let now = get_now_unix();
 
     let payload = AiQuotaPayload {
@@ -886,6 +941,10 @@ pub async fn fetch_all_quota_data() -> AiQuotaPayload {
         antigravity: antigravity_quota,
         active_window_is_ide: active_is_ide,
         ide_is_open: ide_open,
+        codex_is_open: codex_open,
+        antigravity_is_open: agy_open,
+        active_window_is_codex: active_is_codex,
+        active_window_is_antigravity: active_is_agy,
         active_app_name: active_app.or(open_app),
         timestamp: now,
     };
@@ -920,6 +979,10 @@ pub fn start_ai_quota_monitor(app: AppHandle) {
         let mut was_ide_open = false;
         let mut was_codex_active = false;
         let mut was_agy_active = false;
+        let mut was_active_codex = false;
+        let mut was_active_agy = false;
+        let mut was_open_codex = false;
+        let mut was_open_agy = false;
 
         loop {
             tokio::time::sleep(Duration::from_millis(800)).await;
@@ -929,8 +992,8 @@ pub fn start_ai_quota_monitor(app: AppHandle) {
                 continue;
             }
 
-            let (is_ide, app_name) = check_active_window_is_ide();
-            let (is_open, open_app_name) = check_ide_is_open();
+            let (is_ide, is_active_codex, is_active_agy, app_name) = check_active_window_is_ide();
+            let (is_open, is_open_codex, is_open_agy, open_app_name) = check_ide_is_open();
             let is_codex_active = if settings.show_codex {
                 check_codex_is_working()
             } else {
@@ -942,7 +1005,8 @@ pub fn start_ai_quota_monitor(app: AppHandle) {
                 false
             };
 
-            let is_match = is_ide || is_open;
+            let is_match = (settings.show_codex && (is_active_codex || is_open_codex))
+                || (settings.show_antigravity && (is_active_agy || is_open_agy));
             let interval = Duration::from_secs(settings.refresh_interval_sec.max(15));
             let codex_retry_due = settings.show_codex && should_retry_codex();
             let force_refresh = FORCE_REFRESH_REQUESTED.swap(false, Ordering::Relaxed);
@@ -953,7 +1017,12 @@ pub fn start_ai_quota_monitor(app: AppHandle) {
 
             let codex_active_changed = is_codex_active != was_codex_active;
             let agy_active_changed = is_agy_active != was_agy_active;
-            let window_state_changed = is_ide != was_ide_active || is_open != was_ide_open;
+            let window_state_changed = is_ide != was_ide_active
+                || is_open != was_ide_open
+                || is_active_codex != was_active_codex
+                || is_active_agy != was_active_agy
+                || is_open_codex != was_open_codex
+                || is_open_agy != was_open_agy;
 
             if should_poll {
                 last_poll = Instant::now();
@@ -962,6 +1031,10 @@ pub fn start_ai_quota_monitor(app: AppHandle) {
                     Err(_) => {
                         was_ide_active = is_ide;
                         was_ide_open = is_open;
+                        was_active_codex = is_active_codex;
+                        was_active_agy = is_active_agy;
+                        was_open_codex = is_open_codex;
+                        was_open_agy = is_open_agy;
                         was_codex_active = is_codex_active;
                         was_agy_active = is_agy_active;
                         continue;
@@ -979,6 +1052,10 @@ pub fn start_ai_quota_monitor(app: AppHandle) {
                 if let Some(mut cached) = quota_snapshot(&LATEST_PAYLOAD) {
                     cached.active_window_is_ide = is_ide;
                     cached.ide_is_open = is_open;
+                    cached.codex_is_open = is_open_codex;
+                    cached.antigravity_is_open = is_open_agy;
+                    cached.active_window_is_codex = is_active_codex;
+                    cached.active_window_is_antigravity = is_active_agy;
                     cached.active_app_name = app_name.or(open_app_name);
                     if let Some(ref mut c) = cached.codex {
                         c.is_active = Some(is_codex_active);
@@ -993,6 +1070,10 @@ pub fn start_ai_quota_monitor(app: AppHandle) {
 
             was_ide_active = is_ide;
             was_ide_open = is_open;
+            was_active_codex = is_active_codex;
+            was_active_agy = is_active_agy;
+            was_open_codex = is_open_codex;
+            was_open_agy = is_open_agy;
             was_codex_active = is_codex_active;
             was_agy_active = is_agy_active;
         }
@@ -1045,14 +1126,28 @@ mod tests {
             antigravity: None,
             active_window_is_ide: false,
             ide_is_open: false,
+            codex_is_open: false,
+            antigravity_is_open: false,
+            active_window_is_codex: false,
+            active_window_is_antigravity: false,
             active_app_name: None,
             timestamp: 0,
         }));
         if let Some(mut snapshot) = quota_snapshot(&cache) {
             snapshot.ide_is_open = true;
+            snapshot.codex_is_open = true;
             *cache.try_lock().expect("snapshot must release cache lock") = Some(snapshot);
         }
         assert!(cache.lock().unwrap().as_ref().unwrap().ide_is_open);
+        assert!(cache.lock().unwrap().as_ref().unwrap().codex_is_open);
+    }
+
+    #[test]
+    fn test_classify_app() {
+        assert_eq!(classify_app(&Some("code.exe".to_string()), "anything"), (true, false, Some("VS Code".to_string())));
+        assert_eq!(classify_app(&Some("chatgpt.exe".to_string()), "ChatGPT"), (true, false, Some("ChatGPT".to_string())));
+        assert_eq!(classify_app(&Some("antigravity.exe".to_string()), "Antigravity"), (false, true, Some("Antigravity".to_string())));
+        assert_eq!(classify_app(&Some("chrome.exe".to_string()), "OpenAI Codex Documentation"), (false, false, None));
     }
 
     #[tokio::test]
