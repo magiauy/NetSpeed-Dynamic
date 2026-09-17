@@ -1,11 +1,13 @@
 <template>
+    <div class="island-viewport" :style="{ '--island-top-gap': dynamicIslandTopAttached ? '0px' : `${GLOW_TOP}px` }">
     <transition @enter="onEnter" @leave="onLeave" :css="false">
-        <div v-show="isIslandVisible" :class="['island-container', { 'has-music-border': isGlowBorderEnabled }]"
+        <div v-show="isIslandVisible" :class="['island-container', { 'has-music-border': isGlowBorderEnabled, 'dual-ai-glow-boost': isDualAiGlowBoostActive, 'top-attached': dynamicIslandTopAttached }]"
             @mousedown="handleMouseDown" @mousemove="handleMouseMove" @mouseup="handleMouseUp"
             @mouseleave="handleMouseLeave" @mouseenter="handleMouseEnter" :style="islandStyle"
             @contextmenu="handleRightClick">
 
-            <div class="rainbow-border-glow" v-if="isGlowBorderEnabled" :style="{ opacity: glowOpacity }"></div>
+            <div class="rainbow-border-glow" v-if="isGlowBorderEnabled && !isDualAiGlowBoostActive" :style="{ opacity: glowOpacity }"></div>
+            <DuoBoostGlow v-if="isDualAiGlowBoostActive" :top-attached="dynamicIslandTopAttached" />
 
             <div v-if="showCoverglassBg" class="coverglass-bg-container" :style="coverglassStyle">
                 <div class="coverglass-bg-image" :style="{ backgroundImage: `url(${blurredCoverUrl})` }"></div>
@@ -14,6 +16,7 @@
             </div>
 
             <div class="island-core-content" :style="coreContentStyle">
+
 
                 <div class="inner-wrapper">
                     <transition mode="out-in" @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
@@ -370,28 +373,78 @@
                                 <div class="music-info-mask-box" ref="maskBoxRef">
                                     <div class="music-info-text single-line" :class="{ 'fade-out': isMusicExpanded }"
                                         style="position: relative; width: 100%; height: 100%;">
-                                        <transition name="lyric-fade">
-                                            <span class="lyric-render-text" :key="currentTrackInfo">
-                                                <!-- 注意：加上了 :data-text="currentTrackInfo" -->
+                                        <transition name="lyric-fade" @after-enter="calculateScroll">
+                                            <!-- 1. Word-level Sync Mode -->
+                                            <span v-if="currentLyricLine?.words?.length && !isVideoPlayer"
+                                                class="lyric-render-text word-sync-mode"
+                                                :key="'w_' + currentLyricLine.startMs">
+                                                <span class="scroll-inner word-scroll-inner" ref="textInnerRef"
+                                                    :style="{ transform: `translate3d(-${timedLyricScroll}px, 0, 0)` }">
+                                                    <span v-for="(word, wIdx) in currentLyricLine.words"
+                                                        :key="wIdx"
+                                                        class="lyric-word"
+                                                        :data-text="word.text"
+                                                        :class="{
+                                                            'is-passed': wIdx < activeLyricWordIndex,
+                                                            'is-active': wIdx === activeLyricWordIndex,
+                                                            'is-future': wIdx > activeLyricWordIndex
+                                                        }"
+                                                        :style="{
+                                                            '--word-progress': wIdx < activeLyricWordIndex ? '100%' : (wIdx === activeLyricWordIndex ? `${(lyricWordProgress * 100).toFixed(1)}%` : '0%')
+                                                        }">{{ word.text }}</span>
+                                                </span>
+                                            </span>
+
+                                            <!-- 2. Line-level Sync Mode -->
+                                            <span v-else-if="currentLyricLine?.text && !isVideoPlayer"
+                                                class="lyric-render-text line-sync-mode"
+                                                :key="'l_' + currentLyricLine.startMs">
                                                 <span class="scroll-inner" ref="textInnerRef"
-                                                    :data-text="currentTrackInfo"
-                                                    :class="{ 'is-scrolling': scrollDist > 0 }" :style="{
+                                                    :data-text="currentLyricLine.text"
+                                                    :style="{ transform: `translate3d(-${timedLyricScroll}px, 0, 0)` }">
+                                                    {{ currentLyricLine.text }}
+                                                </span>
+                                            </span>
+
+                                            <!-- 3. Fallback Mode (Plain lyrics / Song info) -->
+                                            <span v-else class="lyric-render-text fallback-mode" :class="{ 'line-sync-mode': !!plainLyricText }" :key="plainLyricText || currentTrackInfo">
+                                                <span class="scroll-inner" ref="textInnerRef"
+                                                    :data-text="plainLyricText || currentTrackInfo"
+                                                    :class="{ 'is-scrolling': scrollDist > 0, 'is-video-title': isVideoPlayer }" :style="{
                                                         '--scroll-dist': scrollDist + 'px',
                                                         '--scroll-duration': scrollDuration,
                                                         '--scan-duration': scanDuration,
                                                         animationPlayState: isPlaying ? 'running' : 'paused'
                                                     }">
-                                                    {{ currentTrackInfo }}
+                                                    {{ plainLyricText || currentTrackInfo }}
                                                 </span>
                                             </span>
                                         </transition>
                                     </div>
                                     <div class="music-info-text double-line" :class="{ 'fade-in': isMusicExpanded }">
                                         <div class="song-title" ref="expandedTitleBoxRef">
-                                            <span class="scroll-inner" ref="expandedTitleRef"
+                                            <span v-if="currentLyricLine?.words?.length && !isVideoPlayer"
+                                                class="expanded-word-sync">
+                                                <span v-for="(word, wIdx) in currentLyricLine.words"
+                                                    :key="wIdx"
+                                                    class="lyric-word"
+                                                    :data-text="word.text"
+                                                    :class="{
+                                                        'is-passed': wIdx < activeLyricWordIndex,
+                                                        'is-active': wIdx === activeLyricWordIndex,
+                                                        'is-future': wIdx > activeLyricWordIndex
+                                                    }"
+                                                    :style="{
+                                                        '--word-progress': wIdx < activeLyricWordIndex ? '100%' : (wIdx === activeLyricWordIndex ? `${(lyricWordProgress * 100).toFixed(1)}%` : '0%')
+                                                    }">{{ word.text }}</span>
+                                            </span>
+                                            <span v-else-if="currentLyricLine?.text && !isVideoPlayer">
+                                                {{ currentLyricLine.text }}
+                                            </span>
+                                            <span v-else class="scroll-inner" ref="expandedTitleRef"
                                                 :class="{ 'is-scrolling': expandedTitleScrollDist > 0 }"
                                                 :style="{ '--scroll-dist': expandedTitleScrollDist + 'px', '--scroll-duration': expandedTitleScrollDuration }">
-                                                {{ currentSongName }}
+                                                {{ plainLyricText || currentSongName }}
                                             </span>
                                         </div>
                                         <div class="song-artist" v-show="!isVideoPlayer">{{ currentArtistName }}
@@ -559,6 +612,7 @@
             </div>
         </div>
     </transition>
+    </div>
 </template>
 
 <script setup lang="ts">
@@ -568,7 +622,14 @@ import { getCurrentWindow, currentMonitor, availableMonitors, PhysicalPosition, 
 import { listen, emit } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { t, currentLanguage, type AppLanguage } from '../i18n';
+import { useLyrics } from '../features/lyrics/useLyrics';
+import { lyricScrollOffset } from '../features/lyrics/scroll';
+import DuoBoostGlow from '../components/DuoBoostGlow.vue';
 
+// Reserve transparent space without changing the top anchor.
+const GLOW_SIDE = 24;
+const GLOW_TOP = 12;
+const GLOW_BOTTOM = 24;
 const isIslandVisible = ref(false);
 const isMenuOpen = ref(false);
 
@@ -576,6 +637,9 @@ const isMenuOpen = ref(false);
 // 避免旧动画（如正在进行的收缩）在异步读取窗口尺寸后覆盖新状态（如消息展开）。
 // 声明必须早于下方 watch(isIslandVisible)（immediate 回调会用到，存在 TDZ）。
 let latestAnimationRequest = 0;
+let placementQueue: Promise<void> = Promise.resolve();
+let placementRevision = 0;
+let nativeResizeUntil = 0;
 
 // 岛隐藏（窗口缩成 1×1）前记录的物理中心点 { cx, y }：
 // 恢复显示时按「保中心」重定位，避免隐藏前后态宽不同（如音乐态 260px → 网速态 150px）导致整体偏移。
@@ -585,7 +649,10 @@ let islandHiddenCenter: { cx: number; y: number } | null = null;
 const isPositionLocked = ref(localStorage.getItem('nsd_position_locked') === 'true');
 
 // 锁定状态变化时同步托盘菜单勾选（含右键岛菜单/托盘菜单两条切换路径）
-watch(isPositionLocked, (val) => invoke('sync_tray_menu', { lock: val }));
+watch(isPositionLocked, (val) => {
+    invoke('sync_tray_menu', { lock: val });
+    if (val && isIslandVisible.value) void adjustWindowPosition();
+});
 
 // ==================== 岛位置持久化 ====================
 // 拖拽结束后保存左上角物理坐标，重启时优先恢复；重置位置时清除。
@@ -597,7 +664,7 @@ const saveIslandPosition = async () => {
             getCurrentWindow().outerPosition(),
             getCurrentWindow().outerSize()
         ]);
-        localStorage.setItem(SAVED_POS_KEY, JSON.stringify({ x: pos.x, y: pos.y, w: size.width, h: size.height }));
+        localStorage.setItem(SAVED_POS_KEY, JSON.stringify({ x: pos.x, y: pos.y, w: size.width, h: size.height, glowPadding: true, topGutter: true }));
     } catch (e) {
         console.error('保存岛位置失败:', e);
     }
@@ -606,6 +673,7 @@ const saveIslandPosition = async () => {
 // 恢复已保存的位置；坐标无效（显示器拔掉/分辨率变化导致落在所有现存屏幕外）时清除并返回 false
 const restoreSavedPosition = async (): Promise<boolean> => {
     try {
+        if (isPositionLocked.value || dynamicIslandTopAttached.value) return false;
         const raw = localStorage.getItem(SAVED_POS_KEY);
         if (!raw) return false;
         const saved = JSON.parse(raw);
@@ -621,7 +689,16 @@ const restoreSavedPosition = async (): Promise<boolean> => {
             localStorage.removeItem(SAVED_POS_KEY);
             return false;
         }
-        await getCurrentWindow().setPosition(new PhysicalPosition(saved.x, saved.y));
+        // Older saves used the visible pill's left edge, before transparent gutters.
+        const restoredX = saved.glowPadding ? saved.x
+            : saved.x - Math.round(GLOW_SIDE * appScale.value * (window.devicePixelRatio || 1));
+        const monitor = monitors.find(m => saved.x >= m.position.x - 8 && saved.x < m.position.x + m.size.width);
+        const restoredY = saved.topGutter ? saved.y : Math.max(monitor?.position.y ?? saved.y,
+            saved.y - Math.round(GLOW_TOP * appScale.value * (window.devicePixelRatio || 1)));
+        await getCurrentWindow().setPosition(new PhysicalPosition(restoredX, restoredY));
+        if (!saved.glowPadding || !saved.topGutter) {
+            localStorage.setItem(SAVED_POS_KEY, JSON.stringify({ ...saved, x: restoredX, y: restoredY, glowPadding: true, topGutter: true }));
+        }
         return true;
     } catch {
         return false;
@@ -647,8 +724,8 @@ watch(isIslandVisible, (visible) => {
         // 呼出时先把窗口恢复到应有的物理尺寸（getBaseSize/appScale 此时早已初始化）
         const { w, h } = getBaseSize();
         const scaleFactor = window.devicePixelRatio || 1;
-        const physW = Math.ceil(w * appScale.value * scaleFactor);
-        const physH = Math.ceil(h * appScale.value * scaleFactor);
+        const physW = Math.ceil((w + GLOW_SIDE * 2) * appScale.value * scaleFactor);
+        const physH = Math.ceil((h + GLOW_TOP + GLOW_BOTTOM) * appScale.value * scaleFactor);
         appWindow.setSize(new PhysicalSize(physW, physH)).then(async () => {
             // 保中心恢复：按隐藏前记录的中心点重算左上角，宽度变化也不再偏移
             if (islandHiddenCenter) {
@@ -661,6 +738,7 @@ watch(isIslandVisible, (visible) => {
                     ));
                 } catch (e) { }
             }
+            if (isPositionLocked.value || dynamicIslandTopAttached.value) await adjustWindowPosition();
         }).catch(() => { });
         return;
     }
@@ -748,10 +826,10 @@ const captureFsHoverSlot = async () => {
         if (!monitor) { fsHoverSlot = null; return; }
         const scaleFactor = monitor.scaleFactor;
         const { w: lw, h: lh } = getBaseSize();
-        const pw = Math.round(lw * appScale.value * scaleFactor);
-        const ph = Math.round(lh * appScale.value * scaleFactor);
+        const pw = Math.round((lw + GLOW_SIDE * 2) * appScale.value * scaleFactor);
+        const ph = Math.round((lh + GLOW_TOP + GLOW_BOTTOM) * appScale.value * scaleFactor);
         const px = monitor.position.x + Math.round((monitor.size.width - pw) / 2);
-        const py = monitor.position.y + Math.round(12 * scaleFactor);
+        const py = monitor.position.y;
         fsHoverSlot = { x: px, y: py, w: pw, h: ph };
     } catch (e3) {
         console.error('[fsHover] 合成唤醒区失败', e3);
@@ -782,8 +860,8 @@ const raiseFsHoverIsland = async () => {
     try {
         // 仅恢复尺寸即可：缩成 1×1 时窗口左上角位置保持不变，原显示位置自动保留
         await appWindow.setSize(new PhysicalSize(
-            Math.ceil(w * appScale.value * scaleFactor),
-            Math.ceil(h * appScale.value * scaleFactor)
+            Math.ceil((w + GLOW_SIDE * 2) * appScale.value * scaleFactor),
+            Math.ceil((h + GLOW_TOP + GLOW_BOTTOM) * appScale.value * scaleFactor)
         ));
     } catch (e) { console.error('[fsHover] 恢复尺寸失败', e); }
     // 2. 显示窗口并重新置顶（待命的 1×1 窗口可能被全屏应用盖在底层）
@@ -1233,7 +1311,9 @@ const islandStyle = computed<CSSProperties>(() => {
         color: color,
         width: '100%',
         height: '100%',
-        borderRadius: isExpandedSize.value ? '24px' : `${nsdBorderRadius.value}px`,
+        borderRadius: dynamicIslandTopAttached.value
+            ? (isExpandedSize.value ? '0 0 24px 24px' : `0 0 ${nsdBorderRadius.value}px ${nsdBorderRadius.value}px`)
+            : (isExpandedSize.value ? '24px' : `${nsdBorderRadius.value}px`),
         position: 'relative',
     };
 });
@@ -1243,7 +1323,8 @@ const coreContentStyle = computed(() => {
     const linear = islandOpacity.value / 100;
     const alpha = Math.pow(linear, 1 / 2.2);
     const innerRadiusValue = Math.max(nsdBorderRadius.value - 2, 8);
-    const innerRadius = isExpandedSize.value ? '22px' : `${innerRadiusValue}px`;
+    const radius = isExpandedSize.value ? '22px' : `${innerRadiusValue}px`;
+    const innerRadius = dynamicIslandTopAttached.value ? `0 0 ${radius} ${radius}` : radius;
 
     if (islandTheme.value === 'white') {
         return { backgroundColor: `rgba(255, 255, 255, ${alpha})`, borderRadius: innerRadius };
@@ -1260,19 +1341,18 @@ const coverglassStyle = computed<CSSProperties>(() => {
     const linear = islandOpacity.value / 100;
     const alpha = Math.pow(linear, 1 / 2.2);
 
-    if (isGlowBorderEnabled.value) {
+    if (isGlowBorderEnabled.value || isDualAiGlowBoostActive.value) {
         // 流光边框开启时：内缩 2px 给边框让路，并匹配内层圆角
-        const innerRadiusValue = Math.max(nsdBorderRadius.value - 2, 8);
         return {
-            top: '2px', left: '2px', right: '2px', bottom: '2px',
-            borderRadius: isExpandedSize.value ? '22px' : `${innerRadiusValue}px`,
+            top: dynamicIslandTopAttached.value ? '0' : '2px', left: '2px', right: '2px', bottom: '2px',
+            borderRadius: coreContentStyle.value.borderRadius,
             opacity: alpha // 将透明度应用到沉浸背景层
         };
     }
     // 流光边框关闭时：铺满整个灵动岛，并匹配外层大圆角
     return {
         top: '0', left: '0', right: '0', bottom: '0',
-        borderRadius: isExpandedSize.value ? '24px' : `${nsdBorderRadius.value}px`,
+        borderRadius: islandStyle.value.borderRadius,
         opacity: alpha // 将透明度应用到沉浸背景层
     };
 });
@@ -1295,12 +1375,32 @@ const networkStatus = ref<'good' | 'warning' | 'error'>('good');
 // 音乐控制功能开关
 const isMusicCtlEnabled = ref(localStorage.getItem('nsd_music_ctrl') === 'true');
 const isPlaying = ref(false);
+
+// LRCLIB 歌词与同步引擎 (Word-sync & Line-sync)
+const {
+    lyrics: normalizedLyrics,
+    hasLyrics: hasNormalizedLyrics,
+    currentLine: currentLyricLine,
+    activeWordIndex: activeLyricWordIndex,
+    wordProgress: lyricWordProgress,
+    fetchLyricsForTrack,
+    updatePlayback: updateLyricsPlayback,
+    clearLyrics: clearNormalizedLyrics,
+    replaceLyrics,
+    setDelayMs: setLyricDelay,
+    playbackPositionMs: lyricPlaybackPosition,
+    frameState: lyricFrame,
+    clock: lyricClock,
+} = useLyrics();
+watch(nsdLyricDelay, value => setLyricDelay(value * 1000), { immediate: true });
+const plainLyricText = computed(() => normalizedLyrics.value?.syncType === 'plain'
+    ? normalizedLyrics.value.lines.map(line => line.text).join(' · ') : '');
+
 // 歌词显示
 const parsedLyrics = ref<{ time: number; text: string }[]>([]);
 const currentBaseInfo = ref(''); // 无歌词时兜底显示 "歌名 - 歌手"
 // 歌词时间推算专用变量
 const localPositionMs = ref(0);
-let lastTickTime = performance.now();
 const currentDurationMs = ref(0);
 // 将毫秒转换为 mm:ss 格式
 const formatTime = (ms: number) => {
@@ -1323,35 +1423,10 @@ const lyricQueue = ref<string[]>([]);
 let lastLyricChangeTime = 0;
 let currentMatchedIndex = -1;
 
-// 简单的 LRC 解析器
-const parseLrc = (lrcStr: string) => {
-    const lines = lrcStr.split('\n');
-    const result: { time: number; text: string }[] = [];
-    const timeReg = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
-
-    for (const line of lines) {
-        const match = timeReg.exec(line);
-        if (match) {
-            const min = parseInt(match[1]);
-            const sec = parseInt(match[2]);
-            const msStr = match[3].length === 2 ? match[3] + '0' : match[3];
-            const ms = parseInt(msStr);
-            const time = min * 60000 + sec * 1000 + ms;
-            const text = line.replace(timeReg, '').trim();
-
-            // 过滤掉只有全角空格、零宽字符的“幽灵歌词”
-            const realText = text.replace(/[\s\u200B-\u200D\uFEFF\u3000]/g, '');
-
-            if (realText.length > 0 && !text.includes('纯音乐') && text !== 'lrc' && text !== '//') {
-                result.push({ time, text });
-            }
-        }
-    }
-    return result.sort((a, b) => a.time - b.time);
-};
-
 // 流光边框默认状态完全镜像音乐控制器（只要音乐控制器开着它就开，关了就一起关）
 const isGlowBorderEnabled = ref(localStorage.getItem('nsd_glow_border') === 'true');
+const dualAiGlowBoostEnabled = ref(localStorage.getItem('nsd_dual_ai_glow_boost') !== 'false');
+const dynamicIslandTopAttached = ref(localStorage.getItem('nsd_dynamic_island_top_attached') === 'true');
 // 监听流光边框状态变化，同步托盘菜单的勾选状态
 watch(isGlowBorderEnabled, (val) => invoke('sync_tray_menu', { glow: val }));
 
@@ -1945,7 +2020,17 @@ const initWebSocket = async () => {
                         parsedLyrics.value = payload.lyrics.map((l: any) => ({
                             time: l.time,
                             text: l.text
-                        }));
+                        })).filter((l: { time: number; text: string }) => Number.isFinite(l.time) && typeof l.text === 'string')
+                            .sort((a: { time: number }, b: { time: number }) => a.time - b.time);
+                        const cues = parsedLyrics.value;
+                        replaceLyrics({
+                            trackKey: `ws:${Date.now()}`, source: 'ws', fetchedAt: Date.now(), syncType: 'line',
+                            lines: cues.map((line, index) => ({
+                                text: line.text, startMs: line.time,
+                                endMs: cues[index + 1]?.time ?? Math.max(line.time + 4000, currentDurationMs.value),
+                            })),
+                        }, typeof payload.position === 'number' ? payload.position : 0, true);
+                        parsedLyrics.value = [];
                         lyricQueue.value = [];
                         currentMatchedIndex = -1;
                         lastLyricChangeTime = 0; // 重置时间锁，允许立即显示第一句歌词
@@ -1964,9 +2049,8 @@ const initWebSocket = async () => {
                         if (typeof payload.position === 'number') {
                             // 修正：绝不能无脑覆盖，而是跟 HTTP 逻辑一样，误差大于 500ms 时才校准
                             // 这样才能让 50ms 定时器里的 `localPositionMs.value += delta` 完美发挥顺滑推算的作用！
-                            if (Math.abs(payload.position - localPositionMs.value) > 500) {
-                                localPositionMs.value = payload.position;
-                            }
+                            updateLyricsPlayback(payload.position, isPlaying.value, !!payload.seek, payload.playbackRate);
+                            localPositionMs.value = lyricClock.getPositionMs();
                         }
                         return;
                     }
@@ -1980,12 +2064,12 @@ const initWebSocket = async () => {
                         } else if (payload.status === 'paused') {
                             isPlaying.value = false;
                         }
+                        updateLyricsPlayback(lyricClock.getPositionMs(), isPlaying.value, true, payload.playbackRate);
                         return;
                     }
 
                     // 收到实时频谱 (协议 v1.2.0)：12 频段 -> 7 频段（与本地频谱柱数一致）
                     if (payload.type === 'spectrum') {
-                        lastWsLyricTime = Date.now();
                         if (Array.isArray(payload.bands) && payload.bands.length === 12) {
                             lastWsSpectrumTime = Date.now();
                             spectrumData.value = ensureSpectrumLive(convertWs12To7(payload.bands));
@@ -2010,6 +2094,9 @@ const initWebSocket = async () => {
                 }
 
                 if (lyricText && lyricText.trim() !== "") {
+                    const position = lyricClock.getPositionMs();
+                    clearNormalizedLyrics();
+                    updateLyricsPlayback(position, true, true);
                     lastWsLyricTime = Date.now();
                     isMediaActive.value = true;
                     isPlaying.value = true;
@@ -2140,6 +2227,12 @@ const isAgyActive = computed(() => {
     }
     return false;
 });
+
+const isDualAiGlowBoostActive = computed(() =>
+    dualAiGlowBoostEnabled.value
+    && isCodexActive.value
+    && isAgyActive.value
+);
 
 const codexStatusText = computed(() => {
     if (!codexActivity.value || codexActivity.value.state === 'idle') {
@@ -2288,6 +2381,9 @@ const displayAiQuota = computed(() => {
     }
     if (!enableCodexQuota.value && !enableAntigravityQuota.value) {
         return false;
+    }
+    if (isCodexActive.value || isAgyActive.value) {
+        return true;
     }
     if (quotaDisplayMode.value === 'always') {
         return true;
@@ -2498,25 +2594,44 @@ const BROWSER_VIDEO_SUFFIX_RE = [
     /-音乐-高清完整正版视频在线观看-优酷\s*$/i,
 ];
 
-// 统一后缀删除函数：去掉标题里的所有视频站后缀及残留分隔符
+const YOUTUBE_SUFFIX_RE = [
+    /\s*[\(\[](?:Official\s+(?:Music\s+)?Video|Official\s+MV|Official\s+Audio|Audio|Lyric\s+Video|Lyrics?\s+Video|MV\s+4K|4K|MV|Video\s+Lyrics?|Live\s+Session|Acoustic\s+Version|Visualizer|Lyrics?|Teaser)[\)\]]\s*$/i,
+    /\s*[-–—|]\s*(?:Official\s+MV|Official\s+Music\s+Video|Official\s+Audio|Lyric\s+Video|Lyrics?\s+Video|Zing\s*MP3|NhacCuaTui)\s*$/i,
+    /^(?:正在播放[:：]|Now Playing:\s*|Playing:\s*)/i,
+];
+
+// 统一后缀删除函数：去掉标题里的所有视频站后缀、YouTube/MV 杂质及残留分隔符
 const cleanSongTitle = (title: string) => {
     let s = title;
     for (const re of BROWSER_VIDEO_SUFFIX_RE) {
         s = s.replace(re, '');
     }
+    for (const re of YOUTUBE_SUFFIX_RE) {
+        s = s.replace(re, '');
+    }
+    if (s.includes('|')) {
+        const parts = s.split('|').map(p => p.trim()).filter(p => p.length > 0);
+        if (parts.length >= 2) {
+            s = parts[1];
+        }
+    }
     return s.replace(/[_\- ]+$/, '').trim();
 };
 
 // 核心同步函数：负责获取状态并智能降级
+let musicSyncInFlight = false;
 const syncMusicStatus = async () => {
+    if (musicSyncInFlight) return;
+    musicSyncInFlight = true;
     try {
         const res = await invoke<[string, string, boolean, number, number, string] | null>('fetch_netease_music_info');
 
         // 判定过去 3 秒内是否有活跃的本地 WebSocket 推送
-        const isWsActive = (Date.now() - lastWsLyricTime < 3000);
+        let isWsActive = (Date.now() - lastWsLyricTime < 3000);
 
         if (res) {
-            const [rawSong, artist, playing, positionMs, durationMs, app_id_str] = res;
+            const [rawSong, artist, playing, snapshotPositionMs, durationMs, app_id_str] = res;
+            const snapshotReceivedAt = performance.now();
 
             // 标题命中任一视频站后缀（B站/优酷等）→ 强制判定为浏览器视频模式（用清理前的原始标题判断）
             // 统一清理标题：删除视频站后缀，展示与搜索都用干净标题
@@ -2530,6 +2645,8 @@ const syncMusicStatus = async () => {
 
             // 刷新浏览器 音乐/视频 判定（内部已按浏览器Pro/非Pro分派；浏览器Pro下 SMTC 标题也走标签页正则）
             await judgeBrowserMode(song, durationMs).catch(() => { /* 判定失败沿用歌词兜底 */ });
+            const positionMs = snapshotPositionMs + (playing ? performance.now() - snapshotReceivedAt : 0);
+            isWsActive = Date.now() - lastWsLyricTime < 3000;
 
             // 浏览器Pro 且标签页正则已命中音乐：SMTC 原始值（如"正在播放: xxx"/"edge"）不再反馈到前端显示，
             // 前端保持上一次的歌名/歌手/封面，等后端 fetch_song_meta 解析出真实歌名/歌手后有变化再统一更新
@@ -2538,6 +2655,9 @@ const syncMusicStatus = async () => {
 
             // 切换 SMTC 来源应用：立即清空旧应用残留的歌词，避免串歌词（新应用歌词就绪前先显示标题）
             if (appSwitched) {
+                lastWsLyricTime = 0;
+                isWsActive = false;
+                clearNormalizedLyrics();
                 parsedLyrics.value = [];
                 lyricQueue.value = [];
                 currentMatchedIndex = -1;
@@ -2555,6 +2675,7 @@ const syncMusicStatus = async () => {
             // SMTC 已连上应用但还没有有效标题：单行展示改为显示已连接的应用名（而不是"未在播放"）
             if (!song) {
                 if (!isWsActive) {
+                    clearNormalizedLyrics();
                     const connectedName = getConnectedAppName(app_id_str);
                     if (currentBaseInfo.value !== connectedName) {
                         currentBaseInfo.value = connectedName;
@@ -2575,7 +2696,8 @@ const syncMusicStatus = async () => {
 
             const newTrackInfo = artist ? `${song} - ${artist}` : song;
             // 是否切到了新内容（切歌或浏览器切换 SMTC 播放的内容）
-            const isNewTrack = currentBaseInfo.value !== newTrackInfo;
+            const isNewTrack = appSwitched || currentBaseInfo.value !== newTrackInfo;
+            if (!isWsActive) updateLyricsPlayback(positionMs, playing, isNewTrack);
 
             // 浏览器已判定为播放音乐时，标题/歌手由 fetch_song_meta 提供（更准），
             // 不再用 SMTC 的原始值（如"正在播放: 歌名 - 歌手" / "edge"）覆盖；
@@ -2612,6 +2734,8 @@ const syncMusicStatus = async () => {
                 // 注意：WS 活跃时不能清空，否则会覆盖 WS 刚发来的新歌 init 歌词，
                 // 且 WS 不会为同一首歌再发一次 init，导致歌词一直不显示、标题常驻
                 if (!isWsActive) {
+                    clearNormalizedLyrics();
+                    updateLyricsPlayback(positionMs, playing, true);
                     parsedLyrics.value = [];
                     lyricQueue.value = [];
                     currentMatchedIndex = -1;
@@ -2640,48 +2764,54 @@ const syncMusicStatus = async () => {
                     applyCoverForApp(newTrackInfo, song, artist, app_id_str, false, true);
                 }
 
-                // 仅在 WS 不活跃时，发起 HTTP 网络歌词兜底（PotPlayer 不拉歌词，标题常驻）
-                // 切换 SMTC 应用后 WS 心跳可能仍属于旧应用，此时也立即用 HTTP 兜底，保证新歌歌词及时到位
+                // 仅在 WS 不活跃时，发起 LRCLIB 歌词获取（PotPlayer 不拉歌词，标题常驻）
+                // 切换 SMTC 应用后 WS 心跳可能仍属于旧应用，此时也立即用 LRCLIB 兜底，保证新歌歌词及时到位
                 // 标题命中视频站后缀不拉歌词，保持视频模式
                 if ((!isWsActive || appSwitched) && !isPotplayerSource.value && !isBrowserVideoTitle.value) {
-                    invoke<string>('fetch_netease_lyrics', { songName: song, artistName: artist, durationMs })
-                        .then(async (lrc) => {
-                            if (appSwitched || Date.now() - lastWsLyricTime > 3000) {
-                                if (lrc) {
-                                    parsedLyrics.value = parseLrc(lrc);
-                                    if (isBrowserProMode() && currentIsBrowser.value) {
-                                        // 浏览器Pro：先做标签页判定，通过（标签页命中音乐）才判定为音乐模式
-                                        const mode = await judgeBrowserMode(song, durationMs).catch((): 'music' | 'video' => 'music'); // 判定失败沿用歌词兜底
-                                        // 标签页未命中音乐（判定为视频）→ 不动 SMTC 标题/歌手/封面，保持原样
-                                        if (mode === 'music') {
-                                            // 标签页正则已命中（lastTabPlayingResult 非空）时，judgeBrowserMode 内部已用解析值
-                                            // 搜索过一次元数据并修正标题/歌手/封面，这里不再用 SMTC 原始值重复搜索（一次搜索即可，
-                                            // 不同查询词会返回不同结果，导致歌手乱跳）；仅当正则未命中（关键词兜底判为音乐）时才补搜一次
-                                            if (!lastTabPlayingResult) {
-                                                applyBrowserMusicMeta(song, artist, durationMs);
-                                            }
-                                        }
-                                    } else if (currentIsBrowser.value) {
-                                        // 通用媒体 + 浏览器来源：拉到歌词直接判定为音乐，并把标题/歌手修正为真实音乐信息，封面 SMTC 优先、网络兜底
-                                        markBrowserMusic();
-                                        applyBrowserMusicMeta(song, artist, durationMs);
-                                    } else {
-                                        // 非浏览器来源：拉到歌词直接判定为音乐，不改 SMTC 标题/歌手/封面
-                                        markBrowserMusic();
-                                    }
-                                    // 刚拉到歌词时，若时长仍为 0，用歌词反推补救
-                                    if (currentDurationMs.value <= 0 && parsedLyrics.value.length > 0) {
-                                        const lastLyric = parsedLyrics.value[parsedLyrics.value.length - 1];
-                                        currentDurationMs.value = lastLyric.time + 8000;
-                                    }
-                                }
+                    fetchLyricsForTrack({
+                        title: song,
+                        artist,
+                        durationMs,
+                        positionMs,
+                        playing,
+                        appId: app_id_str,
+                    }).then(async () => {
+                        if (currentBaseInfo.value !== newTrackInfo || normalizedLyrics.value?.source === 'ws') return;
+                        if (hasNormalizedLyrics.value && isBrowserProMode() && currentIsBrowser.value) {
+                            // 浏览器Pro：先做标签页判定，通过（标签页命中音乐）才判定为音乐模式
+                            const mode = await judgeBrowserMode(song, durationMs).catch((): 'music' | 'video' => 'music');
+                            if (currentBaseInfo.value !== newTrackInfo || normalizedLyrics.value?.source === 'ws') return;
+                            if (mode === 'music' && !lastTabPlayingResult) {
+                                applyBrowserMusicMeta(song, artist, durationMs);
                             }
-                        }).catch(() => { });
+                        } else if (hasNormalizedLyrics.value && currentIsBrowser.value) {
+                            // 通用媒体 + 浏览器来源：拉到歌词直接判定为音乐，并把标题/歌手修正为真实音乐信息
+                            markBrowserMusic();
+                            applyBrowserMusicMeta(song, artist, durationMs);
+                        } else if (hasNormalizedLyrics.value) {
+                            // 非浏览器来源：拉到歌词直接判定为音乐
+                            markBrowserMusic();
+                        }
+
+                        // 刚拉到歌词时，若时长仍为 0，用歌词反推补救
+                        if (currentDurationMs.value <= 0 && normalizedLyrics.value && normalizedLyrics.value.lines.length > 0) {
+                            const lastLine = normalizedLyrics.value.lines[normalizedLyrics.value.lines.length - 1];
+                            currentDurationMs.value = lastLine.endMs > 0 ? lastLine.endMs : lastLine.startMs + 8000;
+                        }
+                    }).catch(() => { });
                 }
             } else {
                 // 同一首歌，仅在 WS 不活跃时使用 SMTC 进度校准
-                if (!isWsActive && positionMs > 1000 && Math.abs(positionMs - localPositionMs.value) > 800) {
-                    localPositionMs.value = positionMs - 250;
+                if (!isWsActive) {
+                    localPositionMs.value = lyricClock.getPositionMs();
+                    if (!isPotplayerSource.value && !isBrowserVideoTitle.value) {
+                        void fetchLyricsForTrack({ title: song, artist, durationMs, positionMs, playing, appId: app_id_str }).then(() => {
+                            if (currentBaseInfo.value !== newTrackInfo || !hasNormalizedLyrics.value || normalizedLyrics.value?.source === 'ws') return;
+                            if (!isBrowserProMode() || !currentIsBrowser.value || browserContentOverride.value === 'music') {
+                                markBrowserMusic();
+                            }
+                        });
+                    }
                 }
                 // 修复：SMTC 短暂无返回会往折叠态写入"未在播放歌曲"，同歌恢复后需重新填充标题，
                 // 否则 currentTrackInfo 一直卡在"未在播放"，而展开态（currentSongName）仍正常
@@ -2696,6 +2826,7 @@ const syncMusicStatus = async () => {
         } else {
             // SMTC 未检测到播放器
             if (!isWsActive) {
+                clearNormalizedLyrics();
                 setSafeTrackInfo(`${t('noSongPlaying')} - ${getPlayerName()}`);
                 isPlaying.value = false;
                 // 圆形封面与沉浸背景同步清空，避免 SMTC 短暂断开后留下不一致的旧背景
@@ -2717,6 +2848,8 @@ const syncMusicStatus = async () => {
         }
     } catch (err) {
         console.error('音乐信息获取失败:', err);
+    } finally {
+        musicSyncInFlight = false;
     }
 };
 
@@ -2812,7 +2945,8 @@ const setSafeTrackInfo = (text: string, force = false) => {
     if (!force && renderQueue.length > 0 && renderQueue[renderQueue.length - 1] === text) return;
 
     // 3. 扔进强制渲染队列，绝不使用 clearTimeout 取消任何一句话！
-    renderQueue.push(text);
+    // Keep the display close to the playback clock when updates arrive in bursts.
+    renderQueue.splice(0, renderQueue.length, text);
     if (force) forceRenderNext = true;
     drainRenderQueue();
 };
@@ -2841,8 +2975,9 @@ const drainRenderQueue = () => {
     if (isPlaying.value && parsedLyrics.value.length > 0) {
         // 原本：const lineDurationSec = getCurrentLineDuration() / 1000;
 
-        // 修改为：乘以 0.85，意味着在整句时间的 85% 时就扫描完毕，提速了 15%
-        const lineDurationSec = (getCurrentLineDuration() / 1000) * 0.85;
+        // LRC marks the next line, not when this line finishes singing. A long
+        // instrumental gap must not stretch the highlight across that silence.
+        const lineDurationSec = Math.min(getCurrentLineRemainingDuration() / 1000 * 0.85, 4);
 
         scanDuration.value = `${lineDurationSec}s`;
     } else {
@@ -2915,8 +3050,25 @@ watch([currentSongName, isMusicExpanded, isVideoPlayer], async () => {
     }, 500);
 });
 
+// 当前歌词行变化时自动重新计算折叠态滚动距离
+const lyricLayout = ref({ textWidth: 0, viewportWidth: 0 });
+const timedLyricScroll = computed(() => {
+    const layout = lyricLayout.value;
+    // Keep scrolling continuous across word boundaries and gaps in word timing.
+    // The karaoke highlight still follows individual word timestamps.
+    return lyricScrollOffset(layout.textWidth, layout.viewportWidth, lyricFrame.value.lineProgress);
+});
+watch(currentLyricLine, async () => {
+    await nextTick();
+    calculateScroll();
+});
+
 // 获取当前歌词句的演唱时长（毫秒），用于动态滚动调速
 const getCurrentLineDuration = (): number => {
+    if (currentLyricLine.value) {
+        const line = currentLyricLine.value;
+        return Math.max(400, line.endMs - line.startMs);
+    }
     const lyrics = parsedLyrics.value;
     const idx = currentMatchedIndex;
     if (lyrics.length === 0 || idx < 0 || idx >= lyrics.length) return 4000;
@@ -2931,6 +3083,19 @@ const getCurrentLineDuration = (): number => {
     return remain > 800 ? remain : 4000;
 };
 
+const getCurrentLineRemainingDuration = (): number => {
+    if (currentLyricLine.value) {
+        const currentPos = lyricPlaybackPosition.value - nsdLyricDelay.value * 1000;
+        const remain = currentLyricLine.value.endMs - currentPos;
+        return Math.max(100, remain);
+    }
+    const line = parsedLyrics.value[currentMatchedIndex];
+    if (!line) return 4000;
+    const wsDelay = Date.now() - lastWsLyricTime < 3000 ? WS_LYRIC_DELAY_MS : 0;
+    const playbackTime = localPositionMs.value + 550 - nsdLyricDelay.value * 1000 - wsDelay;
+    return Math.max(100, line.time + getCurrentLineDuration() - playbackTime);
+};
+
 // 折叠态容器宽度缓存：展开/收缩尺寸动画期间，容器实时宽度会被拉宽或收窄，
 // 不能用它来计算滚动距离，否则会得到错误结果甚至把滚动距离算成 0
 let collapsedMaskWidth = 0;
@@ -2939,7 +3104,8 @@ let collapsedMaskWidth = 0;
 const calculateScroll = () => {
     if (!textInnerRef.value || !maskBoxRef.value) return;
 
-    const textWidth = textInnerRef.value.getBoundingClientRect().width;
+    // scrollWidth and clientWidth use the same CSS units even with app zoom.
+    const textWidth = textInnerRef.value.scrollWidth;
     const realContainerWidth = maskBoxRef.value.clientWidth;
 
     // 只有折叠态且尺寸动画结束（尺寸稳定）时才更新缓存；
@@ -2952,8 +3118,11 @@ const calculateScroll = () => {
         containerWidth = collapsedMaskWidth || realContainerWidth;
     }
 
-    // 让文字末尾滚到容器最右侧，完整显示整句歌词（而非只滚到 75% 安全区）
-    const safeWidth = containerWidth;
+    // Leave the final glyph before the 10px mask fade, with 2px breathing room.
+    const safeWidth = Math.max(0, containerWidth - 12);
+    lyricLayout.value = {
+        textWidth, viewportWidth: safeWidth,
+    };
 
     // 只要文字超出容器宽度就必须开始滚动
     if (textWidth > safeWidth) {
@@ -2962,10 +3131,10 @@ const calculateScroll = () => {
 
         // 动态滚动速度：滚动距离已由「歌词长度 - 灵动岛安全区」决定，
         // 速度再参照「当前歌词句的演唱时长」，让滚动跟随节奏而非固定 30px/s
-        const lineDurationSec = getCurrentLineDuration() / 1000;
+        const lineDurationSec = getCurrentLineRemainingDuration() / 1000;
 
-        // 本句实际展示时长：歌词队列消费闸门是 800ms，短句不会低于这个展示窗口
-        const displayWindowSec = Math.max(lineDurationSec, 0.8);
+        // A long pause before the next LRC cue is not part of the sung line.
+        const displayWindowSec = Math.min(Math.max(lineDurationSec, 0.1), 4);
 
         // 整段动画 = 开头停 15% + 滚动 70% + 末尾停 15%，纯滚动占歌词时长的 70%
         const timeToMove = displayWindowSec * 0.7;
@@ -2987,7 +3156,7 @@ const calculateScroll = () => {
             // 滚到底的保证：动画总时长不得超过本句展示时长。
             // 否则长句被 90px/s 钳制 / 4.5s 保底拉长后，还没滚到末尾就被下一句顶掉，
             // 表现为「有时候歌词滚不到底」。文字在展示期内即可滚完并停住结尾。
-            totalDuration = Math.max(Math.min(totalDuration, displayWindowSec), 0.8);
+            totalDuration = displayWindowSec;
         }
 
         scrollDuration.value = `${totalDuration.toFixed(2)}s`;
@@ -3153,10 +3322,17 @@ watch(networkStatus, (newStatus, oldStatus) => {
 });
 
 // 极速强制居中核心函数
-const adjustWindowPosition = async () => {
+const adjustWindowPosition = (): Promise<void> => {
+    const revision = ++placementRevision;
+    latestAnimationRequest++;
+    placementQueue = placementQueue.then(async () => {
     try {
+        // Rust's spring owns window coordinates until its final frame. Wait
+        // for that bounded animation before moving, and block new springs.
+        const remaining = nativeResizeUntil - performance.now();
+        if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
+        if (revision !== placementRevision) return;
         const appWindow = getCurrentWindow();
-        await new Promise((resolve) => setTimeout(resolve, 50)); // 给点缓冲，等待显示器底层加载
 
         let monitor = await currentMonitor();
         if (!monitor) {
@@ -3164,11 +3340,16 @@ const adjustWindowPosition = async () => {
             if (monitors.length > 0) monitor = monitors[0];
             else return;
         }
+        if (revision !== placementRevision) return;
 
         const scaleFactor = monitor.scaleFactor;
-        const { w, h } = getBaseSize();
-        const finalW = w * appScale.value;
-        const finalH = h * appScale.value;
+        // Repositioning must not collapse an expanded music/activity panel.
+        const size = isMusicExpanded.value ? { w: nsdMusicExpandedWidth.value, h: 135 }
+            : isMsgActive.value ? { w: nsdMsgExpandedWidth.value, h: 65 }
+            : displayActivity.value ? { w: Math.max(nsdMsgExpandedWidth.value, 320), h: 70 }
+            : getBaseSize();
+        const finalW = (size.w + GLOW_SIDE * 2) * appScale.value;
+        const finalH = (size.h + GLOW_TOP + GLOW_BOTTOM) * appScale.value;
 
         // 1. 设置正确尺寸
         await appWindow.setSize(new PhysicalSize(
@@ -3178,15 +3359,18 @@ const adjustWindowPosition = async () => {
 
         const windowSize = await appWindow.innerSize();
         
-        // 2. 计算居中坐标 (顶部留 12px 间距)
+        // The native canvas touches the monitor top; the viewport owns the gap.
         const x = monitor.position.x + (monitor.size.width - windowSize.width) / 2;
-        const y = monitor.position.y + (12 * scaleFactor);
+        const y = monitor.position.y;
 
         // 3. 应用位置
         await appWindow.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
+        if (islandHiddenCenter) islandHiddenCenter = { cx: Math.round(x + windowSize.width / 2), y };
     } catch (error) {
         console.error('居中调整失败:', error);
     }
+    });
+    return placementQueue;
 };
 
 const onEnter = (el: Element, done: () => void) => {
@@ -3460,6 +3644,7 @@ watch(appScale, (newScale) => {
 
 // 灵动岛尺寸动画核心（防漂移、防裁切、防打断抖动）
 const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
+    await placementQueue;
     // 岛隐藏（窗口已/将缩成 1×1）时不做形变动画：
     // Rust 侧 start_island_animation 会用 GetWindowRect 取锚点中心，
     // 对着 1×1 窗口取到的锚点是错的，之后所有动画都围着错误中心定位，偏移被固化。
@@ -3475,8 +3660,8 @@ const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
     const myRequest = ++latestAnimationRequest;
     try {
         // 核心：计算最终的缩放尺寸
-        const finalWidth = targetWidth * appScale.value;
-        const finalHeight = targetHeight * appScale.value;
+        const finalWidth = (targetWidth + GLOW_SIDE * 2) * appScale.value;
+        const finalHeight = (targetHeight + GLOW_TOP + GLOW_BOTTOM) * appScale.value;
 
         // 1. 触发形变前上锁
         isSizeAnimating = true;
@@ -3498,6 +3683,7 @@ const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
         const realStartW = realSize.width / scaleFactor;
         const realStartH = realSize.height / scaleFactor;
 
+        nativeResizeUntil = performance.now() + 500;
         await invoke('start_island_animation', {
             startWidth: realStartW,
             startHeight: realStartH,
@@ -3699,18 +3885,22 @@ onMounted(async () => {
     // 监听个性化中心发来的同步指令
     await listen<any>('sync-dynamic-settings', async (event) => {
         const data = event.payload;
+        const attachmentChanged = dynamicIslandTopAttached.value !== (data.dynamicIslandTopAttached === true);
         nsdBaseWidth.value = Number(data.baseWidth);
         nsdBaseHeight.value = Number(data.baseHeight);
         nsdMusicBaseWidth.value = Number(data.musicBaseWidth) || 260;
         nsdMusicExpandedWidth.value = Number(data.musicExpandedWidth);
         nsdMsgExpandedWidth.value = Number(data.msgExpandedWidth);
         nsdBorderRadius.value = Number(data.borderRadius);
+        dualAiGlowBoostEnabled.value = data.dualAiGlowBoostEnabled !== false;
+        dynamicIslandTopAttached.value = data.dynamicIslandTopAttached === true;
         nsdSpringStyle.value = data.springStyle;
         nsdLyricDelay.value = Number(data.lyricDelay) || 0;
 
         // 检测重绘逻辑
         const oldScale = appScale.value;
         appScale.value = Number(data.appScale) || 1.0;
+        if (attachmentChanged && isIslandVisible.value) await adjustWindowPosition();
 
         // 如果缩放比例被用户拖动改变了，强制刷新当前展现的尺寸
         if (oldScale !== appScale.value) {
@@ -4203,16 +4393,13 @@ onMounted(async () => {
     // 高频频谱拉取 (大约 20 帧/秒) 兼顾 歌词高频匹配
     spectrumTimer = setInterval(async () => {
         // 计算这 50ms 里真实流逝的时间（防掉帧补偿）
-        const now = performance.now();
-        const delta = now - lastTickTime;
-        lastTickTime = now;
+        localPositionMs.value = lyricClock.getPositionMs();
 
         // 判定 WS 12 频段频谱是否新鲜（服务端 100ms 一帧，500ms 内未收到即视为无 WS 频谱）
         const wsSpectrumFresh = (Date.now() - lastWsSpectrumTime < 500);
 
         if (isPlaying.value) {
             // 1. 播放状态下，本地时钟疯狂往前推算
-            localPositionMs.value += delta;
 
             // 2. 毫秒级歌词匹配与队列逻辑 (解决快节奏吞字、闪烁消失问题)
             // 视频类应用（potplayer/浏览器视频）：不做歌词匹配，标题常驻显示
@@ -4246,9 +4433,7 @@ onMounted(async () => {
                     }
                     // 3. 正常连续播放推进，把期间极快节奏的短歌词全部推入队列排队
                     else {
-                        for (let i = currentMatchedIndex + 1; i <= matchedIndex; i++) {
-                            lyricQueue.value.push(parsedLyrics.value[i].text);
-                        }
+                        lyricQueue.value = [parsedLyrics.value[matchedIndex].text];
                     }
                     currentMatchedIndex = matchedIndex;
                 } else if (matchedIndex < currentMatchedIndex && matchedIndex !== -1) {
@@ -4258,11 +4443,12 @@ onMounted(async () => {
                     currentMatchedIndex = matchedIndex;
                 }
 
-                // 3. 消费队列：确保每句歌词展示充足的时间，避免 Vue 叠化动画打架
+                // Consume the current line immediately; queuing every short line
+                // behind an 800ms gate accumulates audible/visible drift.
                 if (lyricQueue.value.length > 0) {
                     const now = performance.now();
-                    // out-in 动画加起来需要 300ms，设定 800ms 能让文字至少稳定停留 0.5 秒
-                    if (now - lastLyricChangeTime >= 800) {
+                    // A future timestamp still preserves the initial title hold.
+                    if (now >= lastLyricChangeTime) {
                         const nextLyric = lyricQueue.value.shift();
                         if (nextLyric) {
                             // 歌词第一句恰好等于标题占位文本时，强制歌词接管显示
@@ -4369,7 +4555,15 @@ onUnmounted(() => {
     height: 100%;
 }
 
-/* 外层包裹层：负责裁切多余的流光 */
+/* Transparent native-window gutters are outside the pill and its border.
+   Keep total vertical space constant when changing attachment. */
+.island-viewport {
+    width: 100%;
+    height: 100%;
+    padding: var(--island-top-gap, 12px) 24px calc(36px - var(--island-top-gap, 12px));
+    transition: padding 260ms ease;
+}
+
 .island-container {
     /* 移除 position: absolute; top: 0; */
     margin: 0 auto;
@@ -4381,33 +4575,49 @@ onUnmounted(() => {
     padding: 2px;
     user-select: none;
     -webkit-user-select: none;
-    overflow: hidden;
+    overflow: visible;
     background: transparent;
-    transition: background 0.4s ease;
     box-sizing: border-box;
     transform: translateZ(0);
     will-change: width, height, border-radius;
-    contain: strict;
+    contain: layout style;
+    transition: background 0.4s ease, border-radius 260ms ease;
+}
+
+.island-container.top-attached {
+    padding-top: 0;
+}
+
+.island-container.top-attached .rainbow-border-glow {
+    padding-top: 0;
 }
 
 /* 隐藏在底层的巨大旋转渐变层 */
 .rainbow-border-glow {
     position: absolute;
-    width: 500px;
-    height: 500px;
+    inset: 0;
+    z-index: 3;
+    border-radius: inherit;
+    padding: 2px;
+    pointer-events: none;
+    background: conic-gradient(from var(--duo-ring-angle),
+        #ffbe59 0deg, #ff736c 55deg, #c375ff 115deg,
+        #797dff 180deg, #58d8ff 235deg, #63efba 290deg, #ffbe59 360deg);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    animation: island-ring-spin 6s linear infinite;
+    transition: border-radius 260ms ease;
+}
 
-    /* 修正旋转中心偏移问题 */
-    top: calc(50% - 250px);
-    left: calc(50% - 250px);
-    z-index: 0;
+@keyframes island-ring-spin {
+    to { --duo-ring-angle: 360deg; }
+}
 
-    /* 重新绘制的完美对称环形渐变，清透不发脏 */
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='500'%3E%3Cdefs%3E%3Cfilter id='b' x='-50%25' y='-50%25' width='200%25' height='200%25'%3E%3CfeGaussianBlur in='SourceGraphic' stdDeviation='60'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23b)'%3E%3Ccircle cx='250' cy='90' r='150' fill='%23ff3b30'/%3E%3Ccircle cx='390' cy='170' r='150' fill='%23ff9500'/%3E%3Ccircle cx='390' cy='330' r='150' fill='%234cd964'/%3E%3Ccircle cx='250' cy='410' r='150' fill='%23007aff'/%3E%3Ccircle cx='110' cy='330' r='150' fill='%235856d6'/%3E%3Ccircle cx='110' cy='170' r='150' fill='%23ff2d55'/%3E%3C/g%3E%3C/svg%3E");
-    background-size: cover;
-
-    /* 10秒一圈刚刚好，柔和且不怎么吃 GPU */
-    animation: rainbow-rotate 10s linear infinite;
-    will-change: transform;
+.island-container.dual-ai-glow-boost {
+    contain: layout style;
+    overflow: visible;
 }
 
 /* 核心遮罩内容块：挡在旋转渐变层的上方 */
@@ -4420,9 +4630,20 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
     padding: 0 14px;
     overflow: hidden;
+    min-height: 0;
+    flex-shrink: 0;
+    transition: border-radius 260ms ease;
 }
+
+@media (prefers-reduced-motion: reduce) {
+    .island-viewport, .island-container, .island-core-content { transition: none; }
+    .rainbow-border-glow { animation: none; }
+}
+
+
 
 /* 顺时针匀速旋转 */
 @keyframes rainbow-rotate {
@@ -4522,6 +4743,7 @@ onUnmounted(() => {
     height: 6px;
     border-radius: 50%;
     transition: background-color 0.4s ease;
+    flex-shrink: 0;
 }
 
 /* 去掉发光阴影，改为纯粹的扁平化圆点，干净利落 */
@@ -4557,7 +4779,9 @@ onUnmounted(() => {
 /* 增加统一的内部绝对定位平替包裹层 */
 .inner-wrapper {
     position: relative;
-    flex-grow: 1;
+    z-index: 2;
+    flex: 1 1 0%;
+    min-width: 0;
     height: 100%;
     display: flex;
     align-items: center;
@@ -4682,11 +4906,11 @@ onUnmounted(() => {
     opacity: 0;
 }
 
-/* 歌曲信息遮罩容器：挨着封面靠左，占据右侧剩余空间 */
+/* 歌曲信息遮罩容器：挨着封面靠左，跟随 inner-wrapper 自适应剩余宽度 */
 .music-info-mask-box {
     position: absolute;
     left: 30px;
-    right: 10px;
+    right: 0;
     height: 100%;
     display: flex;
     align-items: center;
@@ -4694,8 +4918,8 @@ onUnmounted(() => {
     padding-left: 0;
     -webkit-app-region: no-drag;
     transform: translateY(-1px) translateX(-0.5px);
-    mask-image: linear-gradient(to right, #000000 96%, transparent 100%);
-    -webkit-mask-image: linear-gradient(to right, #000000 96%, transparent 100%);
+    mask-image: linear-gradient(to right, #000000 calc(100% - 10px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, #000000 calc(100% - 10px), transparent 100%);
 }
 
 /* 歌曲文本基础样式 */
@@ -5202,6 +5426,7 @@ onUnmounted(() => {
     gap: 1.5px;
     height: 12px;
     padding-right: 2px;
+    flex-shrink: 0;
 }
 
 /* 暂停状态下的竖线（统一高度） */
@@ -5320,23 +5545,29 @@ onUnmounted(() => {
 }
 
 .song-title {
-    font-size: 15px;
-    font-weight: 700;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 14.5px;
+    font-weight: 650;
+    letter-spacing: -0.015em;
     margin-bottom: 2px;
     white-space: nowrap;
     overflow: hidden;
-    line-height: 1.2;
+    line-height: 1.35;
+    padding-top: 1px;
     width: 100%;
     text-align: left !important;
 }
 
 .song-artist {
-    font-size: 12.5px;
-    opacity: 0.65;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 12px;
+    font-weight: 450;
+    letter-spacing: -0.01em;
+    opacity: 0.68;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    line-height: 1.2;
+    line-height: 1.3;
     width: 100%;
     text-align: left !important;
 }
@@ -5386,6 +5617,7 @@ onUnmounted(() => {
     flex-shrink: 0;
     vertical-align: top;
     backface-visibility: hidden;
+    will-change: transform;
     transform: translateZ(0);
     -webkit-font-smoothing: antialiased;
     transform-style: preserve-3d;
@@ -5482,35 +5714,45 @@ onUnmounted(() => {
     overflow: hidden;
     text-align: left !important;
     display: inline-block;
-    will-change: opacity, filter;
+    will-change: opacity, filter, transform;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    letter-spacing: -0.012em;
+    line-height: 1.35;
+    padding: 2px 0;
 }
 
-.lyric-fade-enter-active,
+.lyric-fade-enter-active {
+    transition: opacity 0.32s cubic-bezier(0.16, 1, 0.3, 1), filter 0.32s cubic-bezier(0.16, 1, 0.3, 1), transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 .lyric-fade-leave-active {
-    /* 180ms 顺滑交替，既有原先的质感，又不会因为时间太长导致空壳 */
-    transition: opacity 0.2s ease, filter 0.22s ease;
+    transition: opacity 0.22s ease-out, filter 0.22s ease-out, transform 0.22s ease-out;
 }
 
-/* 新歌词进来：从透明、模糊，逐渐变得清晰可见 */
+/* 新歌词进来：微动上浮、模糊消散、透明渐显 (Apple Spring) */
 .lyric-fade-enter-from {
     opacity: 0;
-    filter: blur(8px);
+    filter: blur(6px);
+    transform: translateY(calc(-50% + 4px));
 }
 
 .lyric-fade-enter-to {
     opacity: 1;
     filter: blur(0px);
+    transform: translateY(-50%);
 }
 
-/* 旧歌词离开：在原地直接开始变模糊、变透明，直到被新歌词完全平滑盖过去 */
+/* 旧歌词离开：原地轻微上移并消散 */
 .lyric-fade-leave-from {
     opacity: 1;
     filter: blur(0px);
+    transform: translateY(-50%);
 }
 
 .lyric-fade-leave-to {
     opacity: 0;
-    filter: blur(8px);
+    filter: blur(6px);
+    transform: translateY(calc(-50% - 3px));
 }
 
 /* 灵动岛沉浸模式专属样式 */
@@ -5876,14 +6118,78 @@ onUnmounted(() => {
     flex-shrink: 0;
 }
 
-/* --- 终极无损 0 负担卡拉OK效果 --- */
+/* --- LRCLIB 词级同步卡拉OK (Word-Level Karaoke) --- */
+.word-scroll-inner {
+    display: inline-flex !important;
+    align-items: center;
+    white-space: pre !important;
+    -webkit-text-fill-color: initial !important;
+}
+
+.word-scroll-inner::before,
+.word-scroll-inner::after {
+    display: none !important;
+}
+
+.lyric-word {
+    position: relative;
+    display: inline-block;
+    -webkit-text-fill-color: transparent;
+    color: inherit;
+    font-weight: 600;
+    white-space: pre;
+    margin-right: 0.28em;
+}
+
+.lyric-word:last-child {
+    margin-right: 0;
+}
+
+/* Original two-layer sweep, driven by API word timestamps instead of a CSS timer. */
+.lyric-word::before,
+.lyric-word::after {
+    content: attr(data-text);
+    position: absolute;
+    inset: 0;
+    white-space: pre;
+    -webkit-text-fill-color: currentColor;
+    pointer-events: none;
+}
+
+.lyric-word::before {
+    opacity: 0.35;
+}
+
+.lyric-word::after {
+    clip-path: inset(-6px calc(100% - var(--word-progress, 0%)) -6px 0);
+    animation: none;
+}
+
+.lyric-word.is-passed {
+    --word-progress: 100%;
+}
+
+.lyric-word.is-future {
+    --word-progress: 0%;
+}
+
+.expanded-word-sync {
+    display: inline-flex;
+    align-items: center;
+    white-space: pre;
+}
+
+/* --- 终极无损 0 负担卡拉OK效果 (Apple Music 风格微光) --- */
 
 /* 1. 父元素：隐藏原本文字，仅用来撑开宽度和滚动，绝不破坏 color 继承 */
 .lyric-render-text .scroll-inner {
     position: relative;
     -webkit-text-fill-color: transparent;
     font-weight: 600;
-    /* 放心加粗，已经恢复原生渲染，绝对不会发虚！ */
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    letter-spacing: -0.015em;
+    line-height: 1.35;
+    padding: 2px 0;
 }
 
 /* 2. 底层伪元素：完美的半透明未激活态（自适应黑/白主题） */
@@ -5893,42 +6199,65 @@ onUnmounted(() => {
     left: 0;
     top: 0;
     -webkit-text-fill-color: currentColor;
-    /* 提取灵动岛原本的纯白或纯黑 */
-    opacity: 0.35;
-    /* 直接调低透明度作为底色，无论啥主题都能完美变暗 */
+    opacity: 0.38;
     white-space: nowrap;
+    line-height: inherit;
+    padding: inherit;
 }
 
-/* 3. 顶层伪元素：高亮激活态，像拉窗帘一样盖在上面扫过 */
+/* 3. 顶层伪元素：Apple Music 质感高亮激活态，微光发光 */
 .lyric-render-text .scroll-inner::after {
     content: attr(data-text);
     position: absolute;
     left: 0;
     top: 0;
     -webkit-text-fill-color: currentColor;
-    /* 提取真正的纯白/纯黑，绝对高亮！ */
     white-space: nowrap;
+    line-height: inherit;
+    padding: inherit;
+    filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.28));
 
-    /* 核心 0 负担动画：利用 GPU 硬件加速的裁切展开 */
-    clip-path: inset(0 100% 0 0);
+    /* 核心 0 负担动画：利用 GPU 硬件加速的裁切展开，防止越界裁切越南语重音符号 (ệ, ộ, ử, ỹ, ắ, ặ) */
+    clip-path: inset(-6px 100% -6px 0);
     animation: scan-lyric var(--scan-duration) linear forwards;
     animation-play-state: inherit;
-    /* 跟随父元素一起暂停/播放 */
 }
 
-/* 4. 覆盖掉上一版错误的叠加动画，让父元素老老实实只负责横向滚动 */
+/* Line timing is not word timing: keep the whole line readable, without fake karaoke. */
+.line-sync-mode .scroll-inner::before {
+    opacity: 1;
+}
+.line-sync-mode .scroll-inner::after {
+    content: none;
+    animation: none;
+}
+
+/* 4. 横向滚动 */
 .lyric-render-text .scroll-inner.is-scrolling {
+    animation: lyric-scroll-to-end var(--scroll-duration) linear forwards;
+}
+
+.lyric-render-text .scroll-inner.is-scrolling.is-video-title {
     animation: scroll-ping-pong var(--scroll-duration) linear infinite alternate;
 }
 
-/* 5. 扫描裁切关键帧 */
+@keyframes lyric-scroll-to-end {
+    0% {
+        transform: translateX(0);
+    }
+    85%, 100% {
+        transform: translateX(calc(-1 * var(--scroll-dist)));
+    }
+}
+
+/* 5. 扫描裁切关键帧：上下留出充足缓冲区防止越南语声调被裁 */
 @keyframes scan-lyric {
     0% {
-        clip-path: inset(0 100% 0 0);
+        clip-path: inset(-6px 100% -6px 0);
     }
 
     100% {
-        clip-path: inset(0 0 0 0);
+        clip-path: inset(-6px 0 -6px 0);
     }
 }
 

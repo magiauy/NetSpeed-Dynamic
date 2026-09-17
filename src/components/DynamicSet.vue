@@ -64,6 +64,20 @@
                                 :title="t('roundedRectangle')" style="border-radius: 6px;"></button>
                         </div>
                     </div>
+                    <div class="form-item">
+                        <span class="label">{{ t('dualAiGlowBoost') }}</span>
+                        <label class="mock-switch">
+                            <input type="checkbox" v-model="dualAiGlowBoostEnabled">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-item">
+                        <span class="label">Vị trí Dynamic Island</span>
+                        <label class="mock-switch">
+                            <input type="checkbox" v-model="dynamicIslandTopAttached">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
                 </div>
             </div>
 
@@ -305,6 +319,8 @@ const appScale = ref(Number(localStorage.getItem('nsd_app_scale')) || 1.0);
 // 形态与外观
 const borderRadius = ref(Number(localStorage.getItem('nsd_border_radius')) || 100);
 const islandTheme = ref(localStorage.getItem('nsd_island_theme') || 'black');
+const dualAiGlowBoostEnabled = ref(localStorage.getItem('nsd_dual_ai_glow_boost') !== 'false');
+const dynamicIslandTopAttached = ref(localStorage.getItem('nsd_dynamic_island_top_attached') === 'true');
 
 // 物理动效
 const springStyle = ref<'stiff' | 'bouncy'>((localStorage.getItem('nsd_spring_style') as 'stiff' | 'bouncy') || 'bouncy');
@@ -405,7 +421,7 @@ const toggleTaskbar = async () => {
 };
 
 // 统一监听更新逻辑入口
-watch([baseWidth, baseHeight, musicBaseWidth, musicExpandedWidth, msgExpandedWidth, borderRadius, islandTheme, springStyle, appScale, lyricDelay], async () => {
+watch([baseWidth, baseHeight, musicBaseWidth, musicExpandedWidth, msgExpandedWidth, borderRadius, islandTheme, dualAiGlowBoostEnabled, dynamicIslandTopAttached, springStyle, appScale, lyricDelay], async () => {
     // 1. 写入本地缓存
     localStorage.setItem('nsd_base_width', String(baseWidth.value));
     localStorage.setItem('nsd_base_height', String(baseHeight.value));
@@ -414,6 +430,8 @@ watch([baseWidth, baseHeight, musicBaseWidth, musicExpandedWidth, msgExpandedWid
     localStorage.setItem('nsd_msg_expanded_width', String(msgExpandedWidth.value));
     localStorage.setItem('nsd_border_radius', String(borderRadius.value));
     localStorage.setItem('nsd_island_theme', String(islandTheme.value));
+    localStorage.setItem('nsd_dual_ai_glow_boost', String(dualAiGlowBoostEnabled.value));
+    localStorage.setItem('nsd_dynamic_island_top_attached', String(dynamicIslandTopAttached.value));
     localStorage.setItem('nsd_spring_style', springStyle.value);
     localStorage.setItem('nsd_app_scale', String(appScale.value));
     localStorage.setItem('nsd_lyric_delay', String(lyricDelay.value));
@@ -429,6 +447,8 @@ watch([baseWidth, baseHeight, musicBaseWidth, musicExpandedWidth, msgExpandedWid
         musicExpandedWidth: musicExpandedWidth.value,
         msgExpandedWidth: msgExpandedWidth.value,
         borderRadius: borderRadius.value,
+        dualAiGlowBoostEnabled: dualAiGlowBoostEnabled.value,
+        dynamicIslandTopAttached: dynamicIslandTopAttached.value,
         springStyle: springStyle.value,
         appScale: appScale.value,
         lyricDelay: lyricDelay.value,
