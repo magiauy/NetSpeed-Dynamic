@@ -272,7 +272,6 @@
                                                 <div class="hud-provider-badge codex-tag">
                                                     <span class="provider-dot" :class="{ 'is-pulsing': isCodexActive }"></span>
                                                     <span>OpenAI Codex</span>
-                                                    <span v-if="codexStatusText" class="hud-active-badge">{{ codexStatusText }}</span>
                                                 </div>
                                                 <span class="hud-status-badge" :class="{ active: aiQuotaData?.codex?.connected }">
                                                     {{ aiQuotaData?.codex?.connected ? 'ON' : 'OFF' }}
@@ -318,7 +317,6 @@
                                                 <div class="hud-provider-badge agy-tag">
                                                     <span class="provider-dot" :class="{ 'is-pulsing': isAgyActive }"></span>
                                                     <span>Google Antigravity</span>
-                                                    <span v-if="agyStatusText" class="hud-active-badge agy-active-badge">{{ agyStatusText }}</span>
                                                 </div>
                                                 <span class="hud-status-badge" :class="{ active: aiQuotaData?.antigravity?.connected }">
                                                     {{ aiQuotaData?.antigravity?.connected ? 'ON' : 'OFF' }}
@@ -6650,43 +6648,6 @@ onUnmounted(() => {
 
 .provider-dot.is-pulsing {
     animation: codex-dot-pulse 1.2s ease-in-out infinite;
-}
-
-.hud-active-badge {
-    font-size: 8.5px;
-    padding: 1px 5px;
-    border-radius: 3px;
-    background: rgba(16, 185, 129, 0.22);
-    color: #10b981;
-    font-weight: 700;
-    letter-spacing: 0.2px;
-    animation: codex-badge-pulse 1.6s ease-in-out infinite;
-}
-
-.hud-active-badge.agy-active-badge {
-    background: rgba(99, 102, 241, 0.22);
-    color: #818cf8;
-    animation: agy-badge-pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes agy-badge-pulse {
-    0%, 100% {
-        opacity: 0.8;
-    }
-    50% {
-        opacity: 1;
-        box-shadow: 0 0 6px rgba(99, 102, 241, 0.4);
-    }
-}
-
-@keyframes codex-badge-pulse {
-    0%, 100% {
-        opacity: 0.8;
-    }
-    50% {
-        opacity: 1;
-        box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
-    }
 }
 
 .quota-pill {
