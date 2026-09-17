@@ -3,6 +3,7 @@ mod agy_detector;
 mod ai_quota;
 mod audio_spectrum;
 mod codex_detector;
+mod lyrics;
 mod music_controller;
 mod notification;
 mod system_events;
@@ -551,6 +552,7 @@ fn is_widget_visible(app: tauri::AppHandle) -> bool {
     }
 }
 
+
 /// 读取系统剪贴板文本（Windows 专用），供灵动岛检测复制到链接
 #[cfg(target_os = "windows")]
 #[tauri::command]
@@ -817,6 +819,8 @@ pub fn run() {
             music_controller::fetch_song_meta,
             music_controller::start_websocket_lyrics,
             music_controller::stop_websocket_lyrics,
+            lyrics::fetch_normalized_lyrics,
+            lyrics::preload_upcoming_playlist,
             toggle_fps_plugin,
             sync_tray_menu,
             get_clipboard_text,
