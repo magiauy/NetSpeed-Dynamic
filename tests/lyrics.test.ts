@@ -4,7 +4,7 @@ import { createRenderer } from 'vue';
 import { PlaybackClock } from '../src/features/lyrics/clock';
 import { computeFrameState } from '../src/features/lyrics/syncEngine';
 import { useLyrics } from '../src/features/lyrics/useLyrics';
-import { lyricScrollOffset } from '../src/features/lyrics/scroll';
+import { lyricScrollOffset, wordScrollOffset } from '../src/features/lyrics/scroll';
 
 const sample = { trackKey: 'sample', source: 'fixture', fetchedAt: 0, syncType: 'line' as const,
     lines: [{ text: 'First', startMs: 1000, endMs: 2000 }, { text: 'Second', startMs: 3000, endMs: 4000 }] };
@@ -106,8 +106,54 @@ test('lyric delay applies to cue selection, without changing playback position',
 test('scroll follows line time and stops at the readable viewport edge', () => {
     assert.equal(lyricScrollOffset(400, 200, 0), 0);
     assert.equal(lyricScrollOffset(400, 200, 1), 200);
-    assert.equal(lyricScrollOffset(400, 200, 0.475), 100);
+    assert.ok(lyricScrollOffset(400, 200, 0.5) > 100);
     assert.equal(lyricScrollOffset(100, 200, 1), 0);
+});
+
+test('line-only scroll holds briefly, cruises, and slows before its deadline', () => {
+    for (const duration of [600, 1500, 4000, 12000]) {
+        const at = (p: number) => lyricScrollOffset(800, 200, p, duration);
+        const early = at(0.3) - at(0.2);
+        const late = at(0.7) - at(0.6);
+        assert.ok(Math.abs(early - late) < 0.001, 'No slow start followed by a rush');
+        const deadline = 1 - Math.min(350, duration * 0.15) / duration;
+        assert.equal(at(deadline), 600);
+        assert.equal(at(0), 0);
+        assert.equal(at(0.02), 0, 'Hold the opening briefly');
+        assert.ok(at(deadline) - at(deadline - 0.01) < at(0.5) - at(0.49), 'Ease out before stopping');
+        assert.equal(at(1), 600);
+        assert.ok(at(0.1) > 0, 'Begin moving before the first tenth of the cue');
+        let previous = 0;
+        for (let p = 0; p <= 1; p += 0.001) {
+            const value = at(p);
+            assert.ok(value >= previous && value <= 600);
+            previous = value;
+        }
+    }
+});
+
+test('word scroll waits for a slow opening and remains smooth across word boundaries', () => {
+    const words = [
+        { startMs: 0, left: 0 }, { startMs: 2500, left: 60 },
+        { startMs: 3000, left: 120 }, { startMs: 3500, left: 180 },
+        { startMs: 4000, left: 240 }, { startMs: 4500, left: 320 },
+    ];
+    const at = (ms: number) => wordScrollOffset(400, 200, ms, 0, 5000, words);
+    assert.equal(at(2000), 0, 'Do not outrun the sustained opening words');
+    assert.ok(at(3250) > 0);
+    assert.equal(at(5000), 200);
+    let previous = 0;
+    for (let ms = 0; ms <= 5000; ms += 5) {
+        const current = at(ms);
+        assert.ok(current >= previous - 1e-8 && current <= 200);
+        assert.ok(current - previous < 2, 'No word-boundary jumps');
+        previous = current;
+    }
+    for (const word of words.slice(1)) {
+        const leftSpeed = at(word.startMs) - at(word.startMs - 1);
+        const rightSpeed = at(word.startMs + 1) - at(word.startMs);
+        assert.ok(Math.abs(leftSpeed - rightSpeed) < 0.002, 'Velocity stays continuous');
+    }
 });
 
 test('external lyric takeover invalidates a pending HTTP result', async () => {

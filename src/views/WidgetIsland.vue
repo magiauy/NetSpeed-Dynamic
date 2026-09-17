@@ -623,7 +623,7 @@ import { listen, emit } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { t, currentLanguage, type AppLanguage } from '../i18n';
 import { useLyrics } from '../features/lyrics/useLyrics';
-import { lyricScrollOffset } from '../features/lyrics/scroll';
+import { lyricScrollOffset, wordScrollOffset } from '../features/lyrics/scroll';
 import DuoBoostGlow from '../components/DuoBoostGlow.vue';
 
 // Reserve transparent space without changing the top anchor.
@@ -3051,12 +3051,23 @@ watch([currentSongName, isMusicExpanded, isVideoPlayer], async () => {
 });
 
 // 当前歌词行变化时自动重新计算折叠态滚动距离
-const lyricLayout = ref({ textWidth: 0, viewportWidth: 0 });
+const lyricLayout = ref({ textWidth: 0, viewportWidth: 0, words: [] as { left: number }[] });
 const timedLyricScroll = computed(() => {
     const layout = lyricLayout.value;
-    // Keep scrolling continuous across word boundaries and gaps in word timing.
-    // The karaoke highlight still follows individual word timestamps.
-    return lyricScrollOffset(layout.textWidth, layout.viewportWidth, lyricFrame.value.lineProgress);
+    const line = currentLyricLine.value;
+    if (!line) return 0;
+    // Finish before the next cue or final sung word, excluding trailing silence.
+    const nextStart = lyricFrame.value.nextLine?.startMs ?? line.endMs;
+    const sungEnd = line.words?.length
+        ? Math.max(...line.words.map(word => word.endMs)) : line.endMs;
+    const duration = Math.max(1, Math.min(line.endMs, nextStart, sungEnd) - line.startMs);
+    const elapsed = lyricFrame.value.lineProgress * Math.max(1, line.endMs - line.startMs);
+    if (line.words?.length && layout.words.length === line.words.length) {
+        return wordScrollOffset(layout.textWidth, layout.viewportWidth, line.startMs + elapsed,
+            line.startMs, line.startMs + duration,
+            line.words.map((word, index) => ({ startMs: word.startMs, left: layout.words[index].left })));
+    }
+    return lyricScrollOffset(layout.textWidth, layout.viewportWidth, elapsed / duration, duration);
 });
 watch(currentLyricLine, async () => {
     await nextTick();
@@ -3122,6 +3133,8 @@ const calculateScroll = () => {
     const safeWidth = Math.max(0, containerWidth - 12);
     lyricLayout.value = {
         textWidth, viewportWidth: safeWidth,
+        words: Array.from(textInnerRef.value.querySelectorAll<HTMLElement>('.lyric-word'))
+            .map(word => ({ left: word.offsetLeft })),
     };
 
     // 只要文字超出容器宽度就必须开始滚动
