@@ -31,43 +31,57 @@ pub async fn fetch_from_lrclib(
     duration_sec: i64,
 ) -> Result<Option<NormalizedLyrics>, String> {
     let client = get_client();
-    let mut url = format!(
+
+    // 1. Thử gọi chính xác /api/get
+    let mut get_url = format!(
         "https://lrclib.net/api/get?track_name={}&artist_name={}",
         urlencoding::encode(title),
         urlencoding::encode(artist)
     );
     if duration_sec > 0 {
-        url.push_str(&format!("&duration={}", duration_sec));
+        get_url.push_str(&format!("&duration={}", duration_sec));
     }
 
-    let resp = match client.get(&url).send().await {
-        Ok(r) => r,
-        Err(_) => {
-            // Thử search nếu get chính xác thất bại
-            let search_url = format!(
-                "https://lrclib.net/api/search?q={}",
-                urlencoding::encode(&format!("{} {}", title, artist))
-            );
-            let search_resp = client.get(&search_url).send().await.map_err(|e| e.to_string())?;
-            if !search_resp.status().is_success() {
-                return Ok(None);
-            }
-            let items: Vec<LrclibResponse> = search_resp.json().await.map_err(|e| e.to_string())?;
-            for item in items {
-                if let Some(lyrics) = parse_lrclib_synced_response(item, title, artist, duration_sec * 1000) {
+    if let Ok(resp) = client.get(&get_url).send().await {
+        if resp.status().is_success() {
+            if let Ok(data) = resp.json::<LrclibResponse>().await {
+                if let Some(lyrics) = parse_lrclib_synced_response(data, title, artist, duration_sec * 1000) {
                     return Ok(Some(lyrics));
                 }
             }
-            return Ok(None);
         }
-    };
-
-    if !resp.status().is_success() {
-        return Ok(None);
     }
 
-    let data: LrclibResponse = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(parse_lrclib_synced_response(data, title, artist, duration_sec * 1000))
+    // 2. Fallback sang /api/search?q= (tìm kiếm linh hoạt nếu tên ca sĩ/bài hát lệch một chút)
+    let search_queries = [
+        format!("{} {}", title, artist),
+        title.to_string(),
+    ];
+
+    for query in search_queries {
+        let q = query.trim();
+        if q.is_empty() {
+            continue;
+        }
+        let search_url = format!(
+            "https://lrclib.net/api/search?q={}",
+            urlencoding::encode(q)
+        );
+
+        if let Ok(search_resp) = client.get(&search_url).send().await {
+            if search_resp.status().is_success() {
+                if let Ok(items) = search_resp.json::<Vec<LrclibResponse>>().await {
+                    for item in items {
+                        if let Some(lyrics) = parse_lrclib_synced_response(item, title, artist, duration_sec * 1000) {
+                            return Ok(Some(lyrics));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 /// 2. Fallback sang NetEase Music API (cung cấp file LRC đầy đủ mốc thời gian [mm:ss.xx])

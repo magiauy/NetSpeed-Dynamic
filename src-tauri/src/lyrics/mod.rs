@@ -340,5 +340,25 @@ mod tests {
         let sig = found.unwrap();
         assert!(sig.start_ms > 10000 && sig.start_ms < 20000, "First line starts around 13s, got {}ms", sig.start_ms);
     }
+
+    #[tokio::test]
+    async fn test_fetch_chuyen_doi_ta_lrclib() {
+        let lyrics = fetch_normalized_lyrics(
+            "Chuyện Đôi Ta".to_string(),
+            "Emcee L".to_string(),
+            None,
+            208000,
+        )
+        .await
+        .unwrap();
+
+        assert!(!lyrics.lines.is_empty(), "Lyrics lines should not be empty");
+        assert_eq!(lyrics.source, "lrclib", "Should fetch successfully from LRCLIB");
+        assert_eq!(lyrics.sync_type, SyncType::Line, "Must be synced line lyrics");
+        assert!(
+            lyrics.lines.iter().any(|l| l.text.contains("Không ai nhắc về chuyện đôi ta")),
+            "Should contain signature line from Chuyện Đôi Ta"
+        );
+    }
 }
 
