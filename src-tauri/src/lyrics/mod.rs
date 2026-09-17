@@ -2,15 +2,7 @@ pub mod cache;
 pub mod client;
 pub mod models;
 
-use std::sync::OnceLock;
-use cache::LyricsCache;
 use models::{NormalizedLyrics, SyncType, TrackPreloadItem};
-
-static LYRICS_CACHE: OnceLock<LyricsCache> = OnceLock::new();
-
-fn get_cache() -> &'static LyricsCache {
-    LYRICS_CACHE.get_or_init(LyricsCache::new)
-}
 
 fn is_placeholder_artist(artist: &str) -> bool {
     let a = artist.trim().to_lowercase();
@@ -224,14 +216,6 @@ pub async fn fetch_normalized_lyrics(
         duration_ms / 1000
     );
 
-    let cache = get_cache();
-
-    // 1. Kiểm tra RAM Cache
-    if let Some(cached) = cache.get(&track_key) {
-        println!("[Lyrics] Cache Hit: {}", track_key);
-        return Ok(cached);
-    }
-
     println!(
         "[Lyrics] Fetching for: '{} - {}' ({}s)",
         clean_artist,
@@ -239,18 +223,16 @@ pub async fn fetch_normalized_lyrics(
         duration_ms / 1000
     );
 
-    // 2. Thử gọi đến Custom AI Server (100.73.90.79:8765)
+    // 1. Thử gọi đến Custom AI Server (100.73.90.79:8765)
     if let Ok(Some(custom_lyrics)) = client::fetch_from_custom_server(&clean_song, &clean_artist, duration_ms).await {
         println!("[Lyrics] Custom AI Server Success: {} (type: {:?})", track_key, custom_lyrics.sync_type);
-        cache.insert(track_key.clone(), custom_lyrics.clone());
         return Ok(custom_lyrics);
     }
 
-    // 3. Fallback sang LRCLIB trực tuyến
+    // 2. Fallback sang LRCLIB trực tuyến
     println!("[Lyrics] Custom server unavailable or missing. Falling back to LRCLIB...");
     if let Ok(Some(lrclib_lyrics)) = client::fetch_from_lrclib_fallback(&clean_song, &clean_artist, duration_ms / 1000).await {
         println!("[Lyrics] LRCLIB Fallback Success: {}", track_key);
-        cache.insert(track_key.clone(), lrclib_lyrics.clone());
         return Ok(lrclib_lyrics);
     }
 
