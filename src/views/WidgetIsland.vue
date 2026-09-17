@@ -165,7 +165,7 @@
                         </div>
 
                         <div v-else-if="displayAiQuota" class="ai-quota-box" :class="{ 'expanded': isAiQuotaHovered }" key="ai_quota"
-                            @mouseenter="handleAiQuotaMouseEnter" @mouseleave="handleAiQuotaMouseLeave">
+                            @click="toggleAiQuotaExpand" style="cursor: pointer;">
                             <transition name="quota-morph" mode="out-in">
                                 <!-- Compact Capsule Mode on Island -->
                                 <div v-if="!isAiQuotaHovered" class="ai-quota-compact" key="compact">
@@ -2424,28 +2424,15 @@ const handleRefreshAiQuota = async () => {
     }
 };
 
-let aiQuotaHoverTimer: number | null = null;
-
-const handleAiQuotaMouseEnter = () => {
+const toggleAiQuotaExpand = () => {
     if (!displayAiQuota.value) return;
-    if (aiQuotaHoverTimer) {
-        clearTimeout(aiQuotaHoverTimer);
-        aiQuotaHoverTimer = null;
-    }
-    aiQuotaHoverTimer = window.setTimeout(() => {
-        isAiQuotaHovered.value = true;
-    }, 100);
+    isAiQuotaHovered.value = !isAiQuotaHovered.value;
 };
 
-const handleAiQuotaMouseLeave = () => {
-    if (!displayAiQuota.value) return;
-    if (aiQuotaHoverTimer) {
-        clearTimeout(aiQuotaHoverTimer);
-        aiQuotaHoverTimer = null;
-    }
-    aiQuotaHoverTimer = window.setTimeout(() => {
+const collapseAiQuota = () => {
+    if (isAiQuotaHovered.value) {
         isAiQuotaHovered.value = false;
-    }, 150);
+    }
 };
 
 // 灵动岛自定义显示
@@ -3781,23 +3768,28 @@ const expandMusic = (e: MouseEvent) => {
 
 // 鼠标离开灵动岛时：收缩音乐岛或AI Quota
 const handleMouseLeave = () => {
-    if (displayAiQuota.value) {
-        handleAiQuotaMouseLeave();
-    }
     if (!isMusicExpanded.value && !isMusicExpanding.value) return;
 
     // 直接呼叫收缩；若动画锁着，collapseMusic 会记录待办稍后执行
     collapseMusic();
 };
 
-// 鼠标重新移入灵动岛时：取消待执行的收缩，若AI Quota处于活跃态则展开
+// 鼠标重新移入灵动岛时：取消待执行的收缩
 const handleMouseEnter = () => {
     // 若之前移出留下了收缩待办，但动画未播完鼠标又回来，则取消该待办
     isPendingCollapse = false;
-    if (displayAiQuota.value) {
-        handleAiQuotaMouseEnter();
-    }
 };
+
+const handleWindowBlur = () => {
+    collapseMusic();
+    collapseAiQuota();
+};
+
+watch(displayAiQuota, (newVal: boolean) => {
+    if (!newVal) {
+        collapseAiQuota();
+    }
+});
 
 watch(displayMusic, (newVal: boolean) => {
     if (!newVal) {
@@ -3858,7 +3850,7 @@ onMounted(async () => {
     // 启动活动池事件监听（30Hz 快照推送）
     startActivityPoolListening();
 
-    window.addEventListener('blur', collapseMusic);
+    window.addEventListener('blur', handleWindowBlur);
 
     document.addEventListener('contextmenu', (e) => {
         e.preventDefault();
@@ -4526,11 +4518,7 @@ onUnmounted(() => {
         unlistenAiQuotaSettings();
         unlistenAiQuotaSettings = null;
     }
-    if (aiQuotaHoverTimer) {
-        clearTimeout(aiQuotaHoverTimer);
-        aiQuotaHoverTimer = null;
-    }
-    window.removeEventListener('blur', collapseMusic);
+    window.removeEventListener('blur', handleWindowBlur);
     clearInterval(speedTimer);
     clearInterval(pingTimer);
     clearInterval(musicTimer);
