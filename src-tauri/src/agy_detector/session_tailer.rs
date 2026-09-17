@@ -58,12 +58,15 @@ impl AgySessionTailer {
         let latest_conv = find_active_conversation_id();
         let target_path = latest_conv.as_ref().and_then(|id| get_transcript_path_for_conv(id));
 
-        if self.active_conversation_id != latest_conv || self.current_transcript_path != target_path {
-            self.active_conversation_id = latest_conv;
+        // Presence locks may be rewritten while a task is running.  The lock ID is
+        // only a way to locate the transcript, not a reliable cursor identity.
+        // Resetting on an ID-only change skips the bytes written between polls.
+        if transcript_path_changed(&self.current_transcript_path, &target_path) {
             self.current_transcript_path = target_path.clone();
             self.file_offset = 0;
             self.is_initial_catchup = true;
         }
+        self.active_conversation_id = latest_conv;
 
         let transcript_file = match &self.current_transcript_path {
             Some(p) if p.exists() => p,
@@ -87,13 +90,11 @@ impl AgySessionTailer {
             self.file_offset = 0;
         }
 
-        // On startup or session switch, ignore the existing transcript history.
-        // Replaying a stale Thinking/Executing entry (for example after quota exhaustion)
-        // incorrectly marks the Dynamic Island as active until the inactivity timeout fires.
+        // On startup or session switch, replay the recent transcript tail so the
+        // widget restores the visible AGY activity state before the idle timeout.
         if self.is_initial_catchup {
             self.is_initial_catchup = false;
-            self.file_offset = file_len;
-            return;
+            self.file_offset = file_len.saturating_sub(16384);
         }
 
         if file_len == self.file_offset {
@@ -249,62 +250,49 @@ fn get_gemini_cli_dir() -> Option<PathBuf> {
     None
 }
 
-/// Find active conversation ID from presence locks or recent brain folders
+/// Find the conversation whose transcript was updated most recently.
+///
+/// Presence lock files are retained after a task ends, so their modification time
+/// is not a reliable signal of the conversation that is currently producing events.
 fn find_active_conversation_id() -> Option<String> {
     let cli_dir = get_gemini_cli_dir()?;
 
-    // 1. Check presence lock files first (100% accurate for active sessions)
-    let presence_dir = cli_dir.join("presence");
-    if presence_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&presence_dir) {
-            let mut newest_lock: Option<(String, SystemTime)> = None;
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if let Some(ext) = path.extension() {
-                    if ext == "lock" {
-                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                            if let Ok(meta) = entry.metadata() {
-                                if let Ok(modified) = meta.modified() {
-                                    if newest_lock.as_ref().map_or(true, |(_, t)| modified > *t) {
-                                        newest_lock = Some((stem.to_string(), modified));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some((id, _)) = newest_lock {
-                return Some(id);
-            }
-        }
-    }
-
-    // 2. Fallback: Check brain subdirectories sorted by last write time
+    // Check transcript files directly. Unlike a brain directory timestamp, this
+    // changes for every user input, tool call, and model response.
     let brain_dir = cli_dir.join("brain");
     if brain_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(&brain_dir) {
-            let mut newest_folder: Option<(String, SystemTime)> = None;
+            let mut candidates = Vec::new();
             for entry in entries.flatten() {
                 if let Ok(meta) = entry.metadata() {
                     if meta.is_dir() {
                         if let Some(name) = entry.file_name().to_str() {
-                            if let Ok(modified) = meta.modified() {
-                                if newest_folder.as_ref().map_or(true, |(_, t)| modified > *t) {
-                                    newest_folder = Some((name.to_string(), modified));
+                            let transcript = entry
+                                .path()
+                                .join(".system_generated")
+                                .join("logs")
+                                .join("transcript.jsonl");
+                            if let Ok(transcript_meta) = transcript.metadata() {
+                                if let Ok(modified) = transcript_meta.modified() {
+                                    candidates.push((name.to_string(), modified));
                                 }
                             }
                         }
                     }
                 }
             }
-            if let Some((id, _)) = newest_folder {
-                return Some(id);
-            }
+            return select_latest_conversation(candidates);
         }
     }
 
     None
+}
+
+fn select_latest_conversation(candidates: Vec<(String, SystemTime)>) -> Option<String> {
+    candidates
+        .into_iter()
+        .max_by_key(|(_, modified)| *modified)
+        .map(|(id, _)| id)
 }
 
 fn get_transcript_path_for_conv(conv_id: &str) -> Option<PathBuf> {
@@ -328,4 +316,44 @@ fn current_unix_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn transcript_path_changed(current: &Option<PathBuf>, next: &Option<PathBuf>) -> bool {
+    current != next
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{select_latest_conversation, transcript_path_changed};
+    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn does_not_reset_cursor_when_only_conversation_id_changes() {
+        let transcript = Some(PathBuf::from("C:/tmp/transcript.jsonl"));
+
+        assert!(!transcript_path_changed(&transcript, &transcript));
+    }
+
+    #[test]
+    fn resets_cursor_when_transcript_path_changes() {
+        let current = Some(PathBuf::from("C:/tmp/first.jsonl"));
+        let next = Some(PathBuf::from("C:/tmp/second.jsonl"));
+
+        assert!(transcript_path_changed(&current, &next));
+    }
+
+    #[test]
+    fn selects_the_most_recent_transcript_instead_of_the_most_recent_lock() {
+        let base = SystemTime::UNIX_EPOCH;
+        let candidates = vec![
+            ("stale-lock".to_string(), base + Duration::from_secs(10)),
+            ("active-transcript".to_string(), base + Duration::from_secs(20)),
+        ];
+
+        assert_eq!(
+            select_latest_conversation(candidates).as_deref(),
+            Some("active-transcript")
+        );
+    }
 }
