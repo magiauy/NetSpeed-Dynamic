@@ -1314,7 +1314,7 @@ const islandStyle = computed<CSSProperties>(() => {
         width: '100%',
         height: '100%',
         borderRadius: dynamicIslandTopAttached.value
-            ? (isExpandedSize.value ? '0 0 24px 24px' : `0 0 ${nsdBorderRadius.value}px ${nsdBorderRadius.value}px`)
+            ? (isExpandedSize.value ? '0 0 24px 24px' : `0 0 ${Math.min(nsdBorderRadius.value, 20)}px ${Math.min(nsdBorderRadius.value, 20)}px`)
             : (isExpandedSize.value ? '24px' : `${nsdBorderRadius.value}px`),
         position: 'relative',
     };
@@ -1324,7 +1324,9 @@ const islandStyle = computed<CSSProperties>(() => {
 const coreContentStyle = computed(() => {
     const linear = islandOpacity.value / 100;
     const alpha = Math.pow(linear, 1 / 2.2);
-    const innerRadiusValue = Math.max(nsdBorderRadius.value - 2, 8);
+    // Attached corners must stay compact instead of curving through the full height.
+    const outerRadius = dynamicIslandTopAttached.value ? Math.min(nsdBorderRadius.value, 20) : nsdBorderRadius.value;
+    const innerRadiusValue = Math.max(outerRadius - 2, 8);
     const radius = isExpandedSize.value ? '22px' : `${innerRadiusValue}px`;
     const innerRadius = dynamicIslandTopAttached.value ? `0 0 ${radius} ${radius}` : radius;
 

@@ -40,7 +40,7 @@ function computedStyle(name, attached, radius, expanded) {
       const rect=await page.evaluate(()=>{
         const pill=document.querySelector('.island-container'), core=document.querySelector('.island-core-content');
         const a=pill.getBoundingClientRect(),b=core.getBoundingClientRect(),s=getComputedStyle(core), ring=getComputedStyle(document.querySelector('.duo-neon-rim,.rainbow-border-glow'));
-        return {top:a.top,height:a.height,innerHeight:b.height,innerTop:b.top-a.top,topRadius:s.borderTopLeftRadius,mask:ring.maskImage,ringTop:ring.paddingTop};
+        return {top:a.top,height:a.height,innerHeight:b.height,innerTop:b.top-a.top,topRadius:s.borderTopLeftRadius,bottomRadius:s.borderBottomLeftRadius,outerBottomRadius:getComputedStyle(pill).borderBottomLeftRadius,mask:ring.maskImage,ringTop:ring.paddingTop};
       });
       const label=JSON.stringify({zoom,attached,boost,locked,radius,rect});
       assert.ok(Math.abs(rect.top-(attached?0:12)*zoom)<1,label);
@@ -48,6 +48,8 @@ function computedStyle(name, attached, radius, expanded) {
       assert.ok(Math.abs(rect.innerHeight-(h-(attached?2:4))*zoom)<1,label);
       assert.ok(Math.abs(rect.innerTop-(attached?0:2)*zoom)<1,label);
       assert.equal(rect.topRadius,attached?'0px':`${Math.max(radius-2,8)}px`,label);
+      assert.equal(rect.outerBottomRadius,`${attached?Math.min(radius,20):radius}px`,label);
+      assert.equal(rect.bottomRadius,`${Math.max((attached?Math.min(radius,20):radius)-2,8)}px`,label);
       assert.notEqual(rect.mask,'none',label);
       assert.equal(rect.ringTop,attached?'0px':'2px',label);
     }

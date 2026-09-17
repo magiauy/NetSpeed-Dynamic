@@ -9,6 +9,42 @@ function clamp(value: number, min: number, max: number): number {
     return Math.min(Math.max(value, min), max);
 }
 
+const LINE_LEAD_IN_MS = 250; // Hiện câu mới sớm 250ms trước khi bắt đầu hát để kịp đọc
+const LINE_HOLD_MS = 400; // Giữ câu cũ thêm 400ms để đọc trọn vẹn
+const GAP_BRIDGE_THRESHOLD = 800; // Nối liền mạch nếu khoảng ngắt <= 800ms
+
+/**
+ * Calculates the effective display window for a line, providing:
+ * 1. Lead-in: displays slightly before singing starts (e.g. 250ms).
+ * 2. Hold-over / Gap bridging: holds the previous line smoothly until the next line starts.
+ */
+export function getEffectiveLineWindow(
+    lines: NormalizedLyricLine[],
+    index: number,
+): { start: number; end: number } {
+    const line = lines[index];
+    const total = lines.length;
+    const next = index + 1 < total ? lines[index + 1] : null;
+
+    // Start time: line begins displaying early by LINE_LEAD_IN_MS
+    const start = Math.max(0, line.startMs - LINE_LEAD_IN_MS);
+
+    // End time: bridge small gaps to next line, or hold for LINE_HOLD_MS
+    let end: number;
+    if (next) {
+        const gap = next.startMs - line.endMs;
+        if (gap <= GAP_BRIDGE_THRESHOLD) {
+            end = Math.max(line.startMs, next.startMs - LINE_LEAD_IN_MS);
+        } else {
+            end = Math.min(line.endMs + LINE_HOLD_MS, next.startMs - LINE_LEAD_IN_MS);
+        }
+    } else {
+        end = line.endMs;
+    }
+
+    return { start, end };
+}
+
 /**
  * Finds the index of the active lyric line for the given timestamp.
  * Uses sequential cursor hint for O(1) in playback, fallback to binary search on seek.
@@ -19,36 +55,39 @@ export function findActiveLineIndex(
     hintIndex = -1,
 ): number {
     if (!lines || lines.length === 0) return -1;
-    if (positionMs < lines[0].startMs) return -1;
-
     const total = lines.length;
+
+    // Before the very first line starts (including lead-in)
+    const firstWin = getEffectiveLineWindow(lines, 0);
+    if (positionMs < firstWin.start) return -1;
 
     // Fast-path 1: Same line as previous frame
     if (hintIndex >= 0 && hintIndex < total) {
-        const current = lines[hintIndex];
-        if (positionMs >= current.startMs && positionMs < current.endMs
-            && (hintIndex + 1 === total || positionMs < lines[hintIndex + 1].startMs)) {
+        const win = getEffectiveLineWindow(lines, hintIndex);
+        if (positionMs >= win.start && positionMs < win.end
+            && (hintIndex + 1 === total || positionMs < getEffectiveLineWindow(lines, hintIndex + 1).start)) {
             return hintIndex;
         }
 
         // Fast-path 2: Advance to next sequential line
         if (hintIndex + 1 < total) {
-            const next = lines[hintIndex + 1];
-            if (positionMs >= next.startMs && positionMs < next.endMs
-                && (hintIndex + 2 === total || positionMs < lines[hintIndex + 2].startMs)) {
+            const nextWin = getEffectiveLineWindow(lines, hintIndex + 1);
+            if (positionMs >= nextWin.start && positionMs < nextWin.end
+                && (hintIndex + 2 === total || positionMs < getEffectiveLineWindow(lines, hintIndex + 2).start)) {
                 return hintIndex + 1;
             }
         }
     }
 
-    // Binary search: find largest index where lines[i].startMs <= positionMs
+    // Binary search: find largest index where effective start <= positionMs
     let low = 0;
     let high = total - 1;
     let result = -1;
 
     while (low <= high) {
         const mid = (low + high) >> 1;
-        if (lines[mid].startMs <= positionMs) {
+        const win = getEffectiveLineWindow(lines, mid);
+        if (win.start <= positionMs) {
             result = mid;
             low = mid + 1;
         } else {
@@ -56,8 +95,15 @@ export function findActiveLineIndex(
         }
     }
 
-    // Earlier overlapping lines may still be active after a shorter cue ends.
-    while (result >= 0 && positionMs >= lines[result].endMs) result--;
+    // Verify the line has not expired past its effective end
+    while (result >= 0) {
+        const win = getEffectiveLineWindow(lines, result);
+        if (positionMs < win.end) {
+            break;
+        }
+        result--;
+    }
+
     return result;
 }
 
@@ -132,7 +178,7 @@ export function computeFrameState(
             wordProgress: 0,
             lineProgress: 0,
             currentLine: null,
-            nextLine: lines.find(line => line.startMs > positionMs) || null,
+            nextLine: lines.find((_, idx) => getEffectiveLineWindow(lines, idx).start > positionMs) || null,
         };
     }
 
@@ -161,6 +207,9 @@ export function computeFrameState(
         } else if (positionMs >= currentLine.endMs) {
             wordIndex = currentLine.words.length - 1;
             wordProgress = 1;
+        } else if (positionMs < currentLine.words[0].startMs) {
+            wordIndex = 0;
+            wordProgress = 0;
         }
     }
 

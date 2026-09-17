@@ -215,3 +215,22 @@ test('changing track clears old cues immediately and ignores late responses afte
         assert.equal(lyrics.isLoading.value, false);
     } finally { unmount(); }
 });
+
+test('line mode bridges small gaps seamlessly and leads in before singing', () => {
+    const contiguous = {
+        trackKey: 'contig', source: 'fixture', fetchedAt: 0, syncType: 'line' as const,
+        lines: [
+            { text: 'Line 1', startMs: 33000, endMs: 37500 },
+            { text: 'Line 2', startMs: 37800, endMs: 42000 },
+        ],
+    };
+    // 200ms before Line 1 starts: lead-in displays Line 1 early
+    assert.equal(computeFrameState(contiguous, 32800).currentLine?.text, 'Line 1');
+
+    // Gap between 37500 and 37800 (300ms gap): Line 1 smoothly holds until Line 2 takes over
+    assert.equal(computeFrameState(contiguous, 37520).currentLine?.text, 'Line 1');
+
+    // At 37600 (within 250ms lead-in of Line 2): Line 2 seamlessly takes over with 0ms blank
+    assert.equal(computeFrameState(contiguous, 37600).currentLine?.text, 'Line 2');
+});
+
