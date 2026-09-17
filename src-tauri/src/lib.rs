@@ -8,9 +8,12 @@ mod music_controller;
 mod notification;
 mod system_events;
 
+#[cfg(test)]
+mod responsiveness_tests;
+
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use sysinfo::Networks;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
@@ -292,6 +295,35 @@ fn set_window_bounds(app: tauri::AppHandle, x: i32, y: i32, width: i32, height: 
     }
 }
 
+#[cfg(target_os = "windows")]
+#[link(name = "winmm")]
+extern "system" {
+    fn timeBeginPeriod(uPeriod: u32) -> u32;
+    fn timeEndPeriod(uPeriod: u32) -> u32;
+}
+
+#[cfg(target_os = "windows")]
+struct HighResTimerGuard(bool);
+
+#[cfg(target_os = "windows")]
+impl HighResTimerGuard {
+    fn new(enable: bool) -> Self {
+        if enable {
+            unsafe { timeBeginPeriod(1) };
+        }
+        Self(enable)
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for HighResTimerGuard {
+    fn drop(&mut self) {
+        if self.0 {
+            unsafe { timeEndPeriod(1) };
+        }
+    }
+}
+
 #[tauri::command]
 async fn start_island_animation(
     window: tauri::WebviewWindow,
@@ -300,9 +332,11 @@ async fn start_island_animation(
     target_width: f64,
     target_height: f64,
     spring_style: String,
+    ultra_smooth: Option<bool>,
 ) -> Result<(), String> {
     let id = ANIMATION_ID.fetch_add(1, Ordering::SeqCst) + 1;
     let scale_factor = window.scale_factor().unwrap_or(1.0);
+    let is_ultra_smooth = ultra_smooth.unwrap_or(true);
 
     #[cfg(target_os = "windows")]
     {
@@ -346,9 +380,10 @@ async fn start_island_animation(
             let hwnd_raw = hwnd.0 as isize;
 
             std::thread::spawn(move || {
+                let _timer_guard = HighResTimerGuard::new(is_ultra_smooth);
                 let start_time = std::time::Instant::now();
 
-                // 2. 👈 根据参数动态匹配弹性物理常数
+                // 根据参数动态匹配弹性物理常数
                 // Stiff (克制): 提高频率，大幅拉高阻尼，使其快准狠
                 // Bouncy (Q弹): 保持原本欢快的震喜感
                 let (freq, decay, duration_ms) = if spring_style == "stiff" {
@@ -358,9 +393,10 @@ async fn start_island_animation(
                 };
 
                 let duration = std::time::Duration::from_millis(duration_ms);
+                let tick_interval_ms = if is_ultra_smooth { 2 } else { 8 };
 
                 while start_time.elapsed() < duration {
-                    std::thread::sleep(std::time::Duration::from_millis(8));
+                    std::thread::sleep(std::time::Duration::from_millis(tick_interval_ms));
 
                     if ANIMATION_ID.load(Ordering::SeqCst) != id {
                         return;
@@ -378,11 +414,9 @@ async fn start_island_animation(
                     let current_w = start_width + (target_width - start_width) * spring;
                     let current_h = start_height + (target_height - start_height) * spring;
 
-                    // 1. 保留这俩变量，SetWindowPos 必须用到它们作为宽高参数
                     let phys_window_w = (current_w * scale_factor).round() as i32;
                     let phys_window_h = (current_h * scale_factor).round() as i32;
 
-                    // 2. 坐标计算：直接用浮点数除以 2，避免 i32 除法丢失 0.5 像素导致漂移
                     let final_x = (anchor_cx as f64 - (current_w * scale_factor) / 2.0).round() as i32;
                     let final_y = anchor_cy;
 
@@ -399,41 +433,12 @@ async fn start_island_animation(
                     }
                 }
 
-                // 动画结束定格的那一帧，也要使用相同的浮点计算逻辑
+                // 动画结束定格的那一帧，使用相同的浮点计算逻辑
                 if ANIMATION_ID.load(Ordering::SeqCst) == id {
                     let phys_target_w = (target_width * scale_factor).round() as i32;
                     let phys_target_h = (target_height * scale_factor).round() as i32;
 
                     let final_x = (anchor_cx as f64 - (target_width * scale_factor) / 2.0).round() as i32;
-                    let final_y = anchor_cy;
-
-                    unsafe {
-                        SetWindowPos(
-                            hwnd_raw as _,
-                            std::ptr::null_mut(),
-                            final_x,
-                            final_y,
-                            phys_target_w,
-                            phys_target_h,
-                            0x0014,
-                        );
-                    }
-                    let _ = window_clone.emit("island-resize", vec![target_width, target_height]);
-
-                    if let Ok(mut guard) = ANIMATION_ANCHOR.lock() {
-                        if let Some(anchor) = guard.as_ref() {
-                            if anchor.active_id == id {
-                                *guard = None;
-                            }
-                        }
-                    }
-                }
-
-                if ANIMATION_ID.load(Ordering::SeqCst) == id {
-                    let phys_target_w = (target_width * scale_factor).round() as i32;
-                    let phys_target_h = (target_height * scale_factor).round() as i32;
-
-                    let final_x = anchor_cx - phys_target_w / 2;
                     let final_y = anchor_cy;
 
                     unsafe {
@@ -464,7 +469,7 @@ async fn start_island_animation(
 }
 
 pub struct AppState {
-    pub networks: Mutex<Networks>,
+    pub networks: Arc<Mutex<Networks>>,
     pub ws_task: TokioMutex<Option<tokio::task::JoinHandle<()>>>,
     // 换成专业的原生复选菜单项引用
     pub tray_items: Mutex<
@@ -504,19 +509,24 @@ fn sync_tray_menu(
 }
 
 #[tauri::command]
-fn get_network_stats(state: State<'_, AppState>) -> (u64, u64) {
-    let mut networks = state.networks.lock().unwrap();
-    networks.refresh_list();
-
-    let mut total_rx = 0;
-    let mut total_tx = 0;
-
-    for (_interface_name, data) in networks.iter() {
-        total_rx += data.total_received();
-        total_tx += data.total_transmitted();
-    }
-
-    (total_rx, total_tx)
+async fn get_network_stats(state: State<'_, AppState>) -> Result<(u64, u64), String> {
+    let networks = Arc::clone(&state.networks);
+    // Both windows poll this command. Driver calls and mutex contention must
+    // never hold the UI dispatcher or an async runtime worker.
+    tauri::async_runtime::spawn_blocking(move || {
+        let started = Instant::now();
+        let mut networks = networks.lock().map_err(|e| e.to_string())?;
+        networks.refresh_list();
+        let totals = networks.iter().fold((0, 0), |(rx, tx), (_, data)| {
+            (rx + data.total_received(), tx + data.total_transmitted())
+        });
+        if started.elapsed() >= Duration::from_millis(100) {
+            eprintln!("[performance] get_network_stats took {} ms", started.elapsed().as_millis());
+        }
+        Ok(totals)
+    })
+    .await
+    .map_err(|e| format!("Network reader task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -556,7 +566,23 @@ fn is_widget_visible(app: tauri::AppHandle) -> bool {
 /// 读取系统剪贴板文本（Windows 专用），供灵动岛检测复制到链接
 #[cfg(target_os = "windows")]
 #[tauri::command]
-fn get_clipboard_text() -> Result<String, String> {
+async fn get_clipboard_text() -> Result<String, String> {
+    // Delayed clipboard rendering may wait for the source application.
+    // Open/read/close must all stay on the same blocking worker thread.
+    tauri::async_runtime::spawn_blocking(|| {
+        let started = Instant::now();
+        let result = read_clipboard_text();
+        if started.elapsed() >= Duration::from_millis(100) {
+            eprintln!("[performance] get_clipboard_text took {} ms", started.elapsed().as_millis());
+        }
+        result
+    })
+    .await
+    .map_err(|e| format!("Clipboard reader task failed: {e}"))?
+}
+
+#[cfg(target_os = "windows")]
+fn read_clipboard_text() -> Result<String, String> {
     unsafe {
         use winapi::um::winbase::{GlobalLock, GlobalUnlock};
         use winapi::um::winuser::{CF_UNICODETEXT, CloseClipboard, GetClipboardData, OpenClipboard};
@@ -794,7 +820,7 @@ pub fn run() {
             Some(vec!["--autostart"]),
         ))
         .manage(AppState {
-            networks: Mutex::new(networks),
+            networks: Arc::new(Mutex::new(networks)),
             ws_task: TokioMutex::new(None),
             tray_items: Mutex::new(None),
         })

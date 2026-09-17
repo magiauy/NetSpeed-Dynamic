@@ -60,3 +60,6 @@ futures-util = "0.3"
 surge-ping = "0.8"
 # 活动池 HTTP 入站服务（127.0.0.1:47300）
 axum = { version = "0.8", features = ["json", "tokio"] }
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }

@@ -30,6 +30,15 @@
                         <span>{{ t('springBouncy') }}</span>
                     </button>
                 </div>
+                <div class="form-group-list" style="margin-top: 10px;">
+                    <div class="form-item">
+                        <span class="label" :title="t('ultraSmoothDesc')">{{ t('ultraSmoothAnimation') }}</span>
+                        <label class="mock-switch">
+                            <input type="checkbox" v-model="ultraSmooth">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
             </div>
 
             <div class="neo-card">
@@ -331,6 +340,7 @@ const dynamicIslandTopAttached = ref(localStorage.getItem('nsd_dynamic_island_to
 
 // 物理动效
 const springStyle = ref<'stiff' | 'bouncy'>((localStorage.getItem('nsd_spring_style') as 'stiff' | 'bouncy') || 'bouncy');
+const ultraSmooth = ref<boolean>(localStorage.getItem('nsd_ultra_smooth') !== 'false');
 
 // 替换掉坐标偏移，改为窗口交互特性
 const lyricDelay = ref(Number(localStorage.getItem('nsd_lyric_delay')) || 0);
@@ -429,7 +439,7 @@ const toggleTaskbar = async () => {
 };
 
 // 统一监听更新逻辑入口
-watch([baseWidth, baseHeight, musicBaseWidth, musicExpandedWidth, msgExpandedWidth, borderRadius, islandTheme, dualAiGlowBoostEnabled, dynamicIslandTopAttached, springStyle, appScale, lyricDelay, lyricAlignment], async () => {
+watch([baseWidth, baseHeight, musicBaseWidth, musicExpandedWidth, msgExpandedWidth, borderRadius, islandTheme, dualAiGlowBoostEnabled, dynamicIslandTopAttached, springStyle, ultraSmooth, appScale, lyricDelay, lyricAlignment], async () => {
     // 1. 写入本地缓存
     localStorage.setItem('nsd_base_width', String(baseWidth.value));
     localStorage.setItem('nsd_base_height', String(baseHeight.value));
@@ -441,6 +451,7 @@ watch([baseWidth, baseHeight, musicBaseWidth, musicExpandedWidth, msgExpandedWid
     localStorage.setItem('nsd_dual_ai_glow_boost', String(dualAiGlowBoostEnabled.value));
     localStorage.setItem('nsd_dynamic_island_top_attached', String(dynamicIslandTopAttached.value));
     localStorage.setItem('nsd_spring_style', springStyle.value);
+    localStorage.setItem('nsd_ultra_smooth', String(ultraSmooth.value));
     localStorage.setItem('nsd_app_scale', String(appScale.value));
     localStorage.setItem('nsd_lyric_delay', String(lyricDelay.value));
     localStorage.setItem('nsd_lyric_alignment', lyricAlignment.value);
@@ -459,6 +470,7 @@ watch([baseWidth, baseHeight, musicBaseWidth, musicExpandedWidth, msgExpandedWid
         dualAiGlowBoostEnabled: dualAiGlowBoostEnabled.value,
         dynamicIslandTopAttached: dynamicIslandTopAttached.value,
         springStyle: springStyle.value,
+        ultraSmooth: ultraSmooth.value,
         appScale: appScale.value,
         lyricDelay: lyricDelay.value,
         lyricAlignment: lyricAlignment.value,

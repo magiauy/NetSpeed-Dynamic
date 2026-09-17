@@ -1026,9 +1026,8 @@ watch(displayActivity, (showing) => {
 });
 
 // 跟踪底层是否有真实的媒体活动
-const isMediaActive = ref(true); // 默认 true，交给首次轮询决定去留
+const isMediaActive = ref(false); // 默认 false，只有检测到真实正在播放歌曲时才激活
 let isFirstMediaCheck = true;    // 标记首次检查，防止开机启动时乱弹窗
-let isNewlyEnabled = false;
 
 // ==================== 切歌横向滚动通知 Banner (Song Change Marquee Banner) ====================
 const displaySongChangeBanner = ref(false);
@@ -2437,18 +2436,47 @@ const collapseAiQuota = () => {
 const enableCustomDisplay = ref(localStorage.getItem('nsd_custom_display') === 'true');
 const customSlots = ref<(string | null)[]>(JSON.parse(localStorage.getItem('nsd_custom_slots') || '[null, null, null]'));
 
+// 默认显示内容动态从本地缓存读取
+const getPlayerName = () => {
+    const key = localStorage.getItem('nsd_target_player') || 'netease';
+    const map: Record<string, string> = {
+        'netease': t('neteaseMusic'),
+        'spotify': 'Spotify',
+        'apple': 'Apple Music',
+        'qqmusic': t('qqMusicFull'),
+        'kugou': t('kugouMusicFull'),
+        'echo': 'Echo Music',
+        'lx-music': t('lxMusicFull'),
+        'ytmdesktop': 'YouTube Music',
+        'other': t('genericMediaFull'),
+        'browserPro': t('browserPro')
+    };
+    return map[key] || t('unknownPlatform');
+};
+
+// 定义双行文本所需的单独变量
+const currentSongName = ref('');
+const currentArtistName = ref(getPlayerName());
+const currentTrackInfo = ref('');
+
+// 判定是否有真实正在播放的歌曲（非空且非占位符）
+const hasActiveSong = computed(() => {
+    const s = currentSongName.value?.trim();
+    return !!s && s !== t('noSongPlaying') && s !== '未在播放歌曲' && isMediaActive.value;
+});
+
 // 新增 FPS 判定
 const displayFps = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySongChangeBanner.value && !displaySysToast.value && !displayAiQuota.value && enableFps.value);
 
 // 使用计算属性智能判断当前该显示谁
 const displayCustom = computed(() => !isMsgActive.value && !displaySongChangeBanner.value && !displaySysToast.value && !displayAiQuota.value && enableCustomDisplay.value);
-const displayResource = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySongChangeBanner.value && !displaySysToast.value && !displayAiQuota.value && enableSysResource.value && !enableFps.value && (!isMusicCtlEnabled.value || !isMediaActive.value));
-const displaySpeed = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySongChangeBanner.value && !displaySysToast.value && !displayAiQuota.value && !enableSysResource.value && !enableFps.value && (!isMusicCtlEnabled.value || !isMediaActive.value));
-const displayMusic = computed(() => !isMsgActive.value && !displaySongChangeBanner.value && !displaySysToast.value && !displayAiQuota.value && isMusicCtlEnabled.value && isMediaActive.value && !enableCustomDisplay.value);
+const displayResource = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySongChangeBanner.value && !displaySysToast.value && !displayAiQuota.value && enableSysResource.value && !enableFps.value && (!isMusicCtlEnabled.value || !hasActiveSong.value));
+const displaySpeed = computed(() => !enableCustomDisplay.value && !isMsgActive.value && !displaySongChangeBanner.value && !displaySysToast.value && !displayAiQuota.value && !enableSysResource.value && !enableFps.value && (!isMusicCtlEnabled.value || !hasActiveSong.value));
+const displayMusic = computed(() => !isMsgActive.value && !displaySongChangeBanner.value && !displaySysToast.value && !displayAiQuota.value && isMusicCtlEnabled.value && hasActiveSong.value && !enableCustomDisplay.value);
 
 // 智能判断静默模式下是否该显示：有消息、有系统提示、剪贴板链接通知，或开启了音乐控制且正在播放，或开启了AI Quota且活跃
 const shouldShowInQuietMode = computed(() =>
-    isMsgActive.value || displayActivity.value || displaySongChangeBanner.value || displaySysToast.value || displayClipboard.value || (isMusicCtlEnabled.value && isMediaActive.value) || (enableAiQuota.value && (quotaDisplayMode.value === 'always' || (quotaDisplayMode.value === 'open' ? (aiQuotaData.value?.ide_is_open || aiQuotaData.value?.active_window_is_ide) : !!aiQuotaData.value?.active_window_is_ide)))
+    isMsgActive.value || displayActivity.value || displaySongChangeBanner.value || displaySysToast.value || displayClipboard.value || (isMusicCtlEnabled.value && hasActiveSong.value) || (enableAiQuota.value && (quotaDisplayMode.value === 'always' || (quotaDisplayMode.value === 'open' ? (aiQuotaData.value?.ide_is_open || aiQuotaData.value?.active_window_is_ide) : !!aiQuotaData.value?.active_window_is_ide)))
 );
 watch(shouldShowInQuietMode, async (newVal) => {
     if (isMsgModeEnabled.value) {
@@ -2485,9 +2513,8 @@ const showCoverglassBg = computed(() => {
 const getBaseSize = () => {
     if (displayAiQuota.value) {
         if (isAiQuotaHovered.value) {
-            const hasCodex = enableCodexQuota.value && aiQuotaData.value?.codex;
-            const hasAntigravity = enableAntigravityQuota.value && aiQuotaData.value?.antigravity;
-            const isDual = hasCodex && hasAntigravity;
+            // The HUD renders enabled providers even while their data is loading.
+            const isDual = enableCodexQuota.value && enableAntigravityQuota.value;
             return { w: 320, h: isDual ? 130 : 90 };
         }
         return { w: nsdBaseWidth.value, h: nsdBaseHeight.value };
@@ -2498,8 +2525,23 @@ const getBaseSize = () => {
     return { w: nsdMusicBaseWidth.value, h: Math.max(nsdBaseHeight.value + 8, 42) };
 };
 
-// 监听内容切换，触发丝滑动画过渡
-watch([displaySpeed, displayMusic, displayResource, displayFps, displayAiQuota, isAiQuotaHovered], () => {
+// A different card must not inherit music's expansion guard or delayed resize.
+watch(displayMusic, (visible) => {
+    if (visible) return;
+    if (musicExpandAnimTimer) {
+        clearTimeout(musicExpandAnimTimer);
+        musicExpandAnimTimer = null;
+    }
+    isMusicExpanded.value = false;
+    isMusicExpanding.value = false;
+    isAnimationLocked = false;
+    isPendingCollapse = false;
+});
+
+// Watch dimensions too: provider switches can change height without changing
+// displayAiQuota or its expanded state. Quota percentage updates do not resize.
+watch([displaySpeed, displayMusic, displayResource, displayFps, displayAiQuota, isAiQuotaHovered,
+    () => getBaseSize().w, () => getBaseSize().h], () => {
     // 仅在未被临时弹窗（消息、活动、音乐展开）占用时，才执行基础大小切换
     if (!isMsgActive.value && !displayActivity.value && !displaySysToast.value && !isMusicExpanded.value && !isMusicExpanding.value) {
         const { w, h } = getBaseSize();
@@ -2658,22 +2700,20 @@ const syncMusicStatus = async () => {
             if (!isWsActive) {
                 isPlaying.value = playing;
             }
-            if (!isMediaActive.value) isMediaActive.value = true;
-            isFirstMediaCheck = false;
-            isNewlyEnabled = false;
 
-            // SMTC 已连上应用但还没有有效标题：单行展示改为显示已连接的应用名（而不是"未在播放"）
+            // SMTC 已连上应用但还没有有效标题（无歌曲）：不标记为活跃媒体，清空歌曲名
             if (!song) {
                 if (!isWsActive) {
                     clearNormalizedLyrics();
-                    const connectedName = getConnectedAppName(app_id_str);
-                    if (currentBaseInfo.value !== connectedName) {
-                        currentBaseInfo.value = connectedName;
-                        setSafeTrackInfo(connectedName);
-                    }
+                    currentSongName.value = '';
+                    currentTrackInfo.value = '';
+                    isMediaActive.value = false;
                 }
                 return;
             }
+
+            if (!isMediaActive.value) isMediaActive.value = true;
+            isFirstMediaCheck = false;
 
             // 拦截无效的时长，并智能利用歌词反推
             if (durationMs > 0) {
@@ -2805,7 +2845,7 @@ const syncMusicStatus = async () => {
                 }
                 // 修复：SMTC 短暂无返回会往折叠态写入"未在播放歌曲"，同歌恢复后需重新填充标题，
                 // 否则 currentTrackInfo 一直卡在"未在播放"，而展开态（currentSongName）仍正常
-                if (currentTrackInfo.value.startsWith(t('noSongPlaying'))) {
+                if (currentTrackInfo.value.startsWith(t('noSongPlaying')) || !currentTrackInfo.value) {
                     fillCollapsedWithTrackInfo();
                 }
                 // 封面被清空过（如 SMTC 短暂断开）但沉浸背景还在时，补回圆形封面，避免"背景对、圆形空白"
@@ -2817,7 +2857,8 @@ const syncMusicStatus = async () => {
             // SMTC 未检测到播放器
             if (!isWsActive) {
                 clearNormalizedLyrics();
-                setSafeTrackInfo(`${t('noSongPlaying')} - ${getPlayerName()}`);
+                currentSongName.value = '';
+                currentTrackInfo.value = '';
                 isPlaying.value = false;
                 // 圆形封面与沉浸背景同步清空，避免 SMTC 短暂断开后留下不一致的旧背景
                 coverUrl.value = '';
@@ -2825,13 +2866,6 @@ const syncMusicStatus = async () => {
 
                 if (isMediaActive.value) {
                     isMediaActive.value = false;
-
-                    if (isNewlyEnabled) {
-                        showToast('已开启媒体控制，暂无音频播放', 'sys');
-                        isNewlyEnabled = false;
-                    } else if (!isFirstMediaCheck && isMusicCtlEnabled.value) {
-                        showToast('无媒体活动，已切换为网速显示', 'sys');
-                    }
                 }
                 isFirstMediaCheck = false;
             }
@@ -2844,46 +2878,9 @@ const syncMusicStatus = async () => {
 };
 
 const showInfo = ref(false);
-// 默认显示内容动态从本地缓存读取
-const getPlayerName = () => {
-    const key = localStorage.getItem('nsd_target_player') || 'netease';
-    const map: Record<string, string> = {
-        'netease': t('neteaseMusic'),
-        'spotify': 'Spotify',
-        'apple': 'Apple Music',
-        'qqmusic': t('qqMusicFull'),
-        'kugou': t('kugouMusicFull'),
-        'echo': 'Echo Music',
-        'lx-music': t('lxMusicFull'),
-        'ytmdesktop': 'YouTube Music',
-        'other': t('genericMediaFull'),
-        'browserPro': t('browserPro')
-    };
-    return map[key] || t('unknownPlatform');
-};
-
-// SMTC 连上应用但没有有效标题时，把应用包名转成可读的应用名
-const getConnectedAppName = (appId: string) => {
-    const id = appId.toLowerCase();
-    if (id.includes('edge')) return 'Microsoft Edge';
-    if (id.includes('chrome')) return 'Google Chrome';
-    if (id.includes('bilibili')) return '哔哩哔哩';
-    if (id.includes('cloudmusic') || id.includes('netease')) return '网易云音乐';
-    if (id.includes('spotify')) return 'Spotify';
-    if (id.includes('qqmusic')) return 'QQ音乐';
-    if (id.includes('youtube') || id.includes('ytmdesktop') || id.includes('youtube_music_desktop_app')) return 'YouTube Music';
-    if (id.includes('justsolo')) return 'JustSolo';
-    // 兜底：去掉 .exe 后缀后展示包名
-    return id.replace(/\.exe$/i, '');
-};
 
 // 定义一个用于强制刷新的 key
 const musicBoxKey = ref(0);
-
-// 定义双行文本所需的单独变量
-const currentSongName = ref(t('noSongPlaying'));
-const currentArtistName = ref(getPlayerName());
-const currentTrackInfo = ref(`${t('noSongPlaying')} - ${getPlayerName()}`);
 
 // PotPlayer 无歌手元数据时，后端会把歌手占位为 "potplayer"。
 // 此时不做歌词匹配，直接用标题当常驻歌词显示
@@ -2891,7 +2888,7 @@ const isPotplayerSource = computed(() => currentArtistName.value === 'potplayer'
 
 // 视频类判定变化时，重新填充折叠态文本（音乐显示"标题 - 歌手"，视频只显示标题）
 watch(isVideoPlayer, () => {
-    if (displayMusic.value && currentSongName.value !== t('noSongPlaying')) {
+    if (displayMusic.value && hasActiveSong.value) {
         fillCollapsedWithTrackInfo();
     }
 });
@@ -2903,17 +2900,17 @@ watch(isBrowserMusic, (now) => {
         const song = currentSongName.value;
         const artist = currentArtistName.value;
         const trackInfo = artist ? `${song} - ${artist}` : song;
-        if (trackInfo && song && song !== t('noSongPlaying')) {
+        if (trackInfo && song && hasActiveSong.value) {
             applyCoverForApp(trackInfo, song, artist, currentAppIdStr.value, true, true);
         }
     }
 });
 
 watch(currentLanguage, () => {
-    if (!displayMusic.value || currentSongName.value === t('noSongPlaying')) {
-        currentSongName.value = t('noSongPlaying');
+    if (!hasActiveSong.value) {
+        currentSongName.value = '';
         currentArtistName.value = getPlayerName();
-        currentTrackInfo.value = `${t('noSongPlaying')} - ${getPlayerName()}`;
+        currentTrackInfo.value = '';
     }
 });
 
@@ -3878,16 +3875,13 @@ onMounted(async () => {
                 isGlowBorderEnabled.value = true;
                 localStorage.setItem('nsd_glow_border', 'true');
             }
-            isMediaActive.value = true;
-            isNewlyEnabled = true;
             showInfo.value = false;
             musicBoxKey.value++;
             // 启动 SMTC 时主动尝试连接一次 WS（initWebSocket 内部有一次性保护，不会重复连接）
             initWebSocket();
         } else {
             stopWebSocket();
-            isMediaActive.value = true;
-            isNewlyEnabled = false;
+            isMediaActive.value = false;
         }
     });
 
@@ -3908,12 +3902,11 @@ onMounted(async () => {
         nsdLyricAlignment.value = data.lyricAlignment === 'center' ? 'center' : 'left';
 
         // 检测重绘逻辑
-        const oldScale = appScale.value;
         appScale.value = Number(data.appScale) || 1.0;
         if (attachmentChanged && isIslandVisible.value) await adjustWindowPosition();
 
-        // 如果缩放比例被用户拖动改变了，强制刷新当前展现的尺寸
-        if (oldScale !== appScale.value) {
+        // Apply width changes to the currently expanded card, even at the same zoom.
+        if (!displaySysToast.value && !isMusicExpanding.value) {
             if (isMusicExpanded.value) {
                 animateIslandSize(nsdMusicExpandedWidth.value, 135);
             } else if (isMsgActive.value) {
@@ -3926,11 +3919,6 @@ onMounted(async () => {
             }
         }
 
-        // 收到设置修改后，如果此时没有展开音乐或显示通知，则立即触发形变更新外观！
-        if (!isMsgActive.value && !displayActivity.value && !displaySysToast.value && !isMusicExpanded.value && !isMusicExpanding.value) {
-            const { w, h } = getBaseSize();
-            animateIslandSize(w, h);
-        }
     });
 
     // 监听控制台发来的目标音乐播放器平台切换指令
