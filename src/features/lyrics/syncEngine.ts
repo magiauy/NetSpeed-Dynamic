@@ -9,14 +9,13 @@ function clamp(value: number, min: number, max: number): number {
     return Math.min(Math.max(value, min), max);
 }
 
-const LINE_LEAD_IN_MS = 250; // Hiện câu mới sớm 250ms trước khi bắt đầu hát để kịp đọc
-const LINE_HOLD_MS = 400; // Giữ câu cũ thêm 400ms để đọc trọn vẹn
-const GAP_BRIDGE_THRESHOLD = 800; // Nối liền mạch nếu khoảng ngắt <= 800ms
+const LINE_LEAD_IN_MS = 300; // Hiện câu mới sớm 300ms trước khi bắt đầu hát để kịp đọc
+const LINE_HOLD_MS = 2000; // Giữ câu cũ thêm 2000ms (2s) sau khi kết thúc
 
 /**
  * Calculates the effective display window for a line, providing:
- * 1. Lead-in: displays slightly before singing starts (e.g. 250ms).
- * 2. Hold-over / Gap bridging: holds the previous line smoothly until the next line starts.
+ * 1. Lead-in: displays slightly before singing starts (e.g. 300ms).
+ * 2. Hold-over: holds the previous line for ~2s or until the next line starts.
  */
 export function getEffectiveLineWindow(
     lines: NormalizedLyricLine[],
@@ -29,15 +28,11 @@ export function getEffectiveLineWindow(
     // Start time: line begins displaying early by LINE_LEAD_IN_MS
     const start = Math.max(0, line.startMs - LINE_LEAD_IN_MS);
 
-    // End time: bridge small gaps to next line, or hold for LINE_HOLD_MS
+    // End time: hold for 2s or until the next line starts displaying
     let end: number;
     if (next) {
-        const gap = next.startMs - line.endMs;
-        if (gap <= GAP_BRIDGE_THRESHOLD) {
-            end = Math.max(line.startMs, next.startMs - LINE_LEAD_IN_MS);
-        } else {
-            end = Math.min(line.endMs + LINE_HOLD_MS, next.startMs - LINE_LEAD_IN_MS);
-        }
+        const nextStart = Math.max(line.startMs, next.startMs - LINE_LEAD_IN_MS);
+        end = Math.min(line.endMs + LINE_HOLD_MS, nextStart);
     } else {
         end = line.endMs;
     }

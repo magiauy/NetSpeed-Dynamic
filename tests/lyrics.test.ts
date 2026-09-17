@@ -9,10 +9,16 @@ import { lyricScrollOffset, wordScrollOffset } from '../src/features/lyrics/scro
 const sample = { trackKey: 'sample', source: 'fixture', fetchedAt: 0, syncType: 'line' as const,
     lines: [{ text: 'First', startMs: 1000, endMs: 2000 }, { text: 'Second', startMs: 3000, endMs: 4000 }] };
 
-test('silence and end of track do not retain an expired line', () => {
-    assert.equal(computeFrameState(sample, 2500, 0).currentLine, null);
-    assert.equal(computeFrameState(sample, 4500, 1).currentLine, null);
-    assert.equal(computeFrameState(sample, 2500).nextLine?.text, 'Second');
+test('long silence after 2s hold and end of track do not retain an expired line', () => {
+    const interlude = { trackKey: 'interlude', source: 'fixture', fetchedAt: 0, syncType: 'line' as const,
+        lines: [{ text: 'First', startMs: 1000, endMs: 2000 }, { text: 'Second', startMs: 8000, endMs: 9000 }] };
+    // Within 2s hold: First is still readable at 2500ms
+    assert.equal(computeFrameState(interlude, 2500, 0).currentLine?.text, 'First');
+    // After 2s hold expires during long interlude: null
+    assert.equal(computeFrameState(interlude, 5000, 0).currentLine, null);
+    assert.equal(computeFrameState(interlude, 5000).nextLine?.text, 'Second');
+    // End of track at endMs: null
+    assert.equal(computeFrameState(interlude, 9000, 1).currentLine, null);
 });
 
 test('plain lyrics are not treated as timed cues', () => {
@@ -228,9 +234,9 @@ test('line mode bridges small gaps seamlessly and leads in before singing', () =
     assert.equal(computeFrameState(contiguous, 32800).currentLine?.text, 'Line 1');
 
     // Gap between 37500 and 37800 (300ms gap): Line 1 smoothly holds until Line 2 takes over
-    assert.equal(computeFrameState(contiguous, 37520).currentLine?.text, 'Line 1');
+    assert.equal(computeFrameState(contiguous, 37400).currentLine?.text, 'Line 1');
 
-    // At 37600 (within 250ms lead-in of Line 2): Line 2 seamlessly takes over with 0ms blank
+    // At 37600 (within 300ms lead-in of Line 2): Line 2 seamlessly takes over with 0ms blank
     assert.equal(computeFrameState(contiguous, 37600).currentLine?.text, 'Line 2');
 });
 
