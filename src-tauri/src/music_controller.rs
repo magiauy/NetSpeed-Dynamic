@@ -523,31 +523,67 @@ fn extract_title_artist(
 // 统一搜索函数：依次尝试 QQ音乐 / 网易云 / LRCLIB
 // 歌词用第一个拿到歌词的引擎；标题/歌手优先用 LRC 元数据（[ti:]/[ar:]），
 // 若 LRC 没歌手则继续下一个引擎用搜索结果提取标题/歌手。
-async fn search_song_meta(
-    song_name: &str,
-    artist_name: &str,
-    duration_ms: i64,
-) -> Option<(String, String, String)> {
-    let client = get_http_client();
+// 清理标题与歌手，去除 YouTube / MV / 各种杂质括号与后缀
+fn clean_song_and_artist(raw_song: &str, raw_artist: &str) -> (String, String) {
+    let mut song = raw_song.trim().to_string();
 
-    let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
-
-    // 清洗搜索词：去掉 SMTC 常见的"正在播放: "前缀、" - "分隔符，以及 edge/chrome 等占位歌手
-    let mut clean_song = song_name.trim().to_string();
+    // 1. 去除常见播放状态前缀
     for prefix in ["正在播放: ", "正在播放：", "Now Playing: ", "Playing: "] {
-        if let Some(stripped) = clean_song.strip_prefix(prefix) {
-            clean_song = stripped.trim().to_string();
+        if let Some(stripped) = song.strip_prefix(prefix) {
+            song = stripped.trim().to_string();
             break;
         }
     }
-    // 若歌名形如 "歌名 - 歌手"，只取 " - " 前的歌名部分
-    if let Some(idx) = clean_song.find(" - ") {
-        clean_song = clean_song[..idx].trim().to_string();
+
+    let mut inferred_artist = String::new();
+
+    // 2. 处理竖线分割，如 "SƠN TÙNG M-TP | ĐỪNG LÀM TRÁI TIM ANH ĐAU | OFFICIAL MUSIC VIDEO"
+    if song.contains('|') {
+        let parts: Vec<String> = song.split('|').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
+        if parts.len() >= 2 {
+            inferred_artist = parts[0].clone();
+            song = parts[1].clone();
+        }
+    } else if song.contains(" - ") {
+        let parts: Vec<String> = song.split(" - ").map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
+        if parts.len() >= 2 {
+            song = parts[0].clone();
+            if inferred_artist.is_empty() {
+                inferred_artist = parts[1].clone();
+            }
+        }
     }
+
+    // 3. 移除常见的视频/音频/MV/字幕标记后缀 (大小写不敏感)
+    let patterns = [
+        "[official music video]", "[official mv]", "[official audio]", "[official lyric video]",
+        "[lyric video]", "[lyrics video]", "[lyrics]", "[mv 4k]", "[4k]", "[mv]", "[audio]",
+        "(official music video)", "(official mv)", "(official audio)", "(official lyric video)",
+        "(lyric video)", "(lyrics video)", "(lyrics)", "(audio)", "(mv)", "(visualizer)",
+        "(visualizer video)", "(live session)", "(acoustic version)", "(video lyrics)",
+        "official music video", "official mv", "official audio", "official lyric video", "lyric video"
+    ];
+
+    let mut lower = song.to_lowercase();
+    for pat in &patterns {
+        if let Some(idx) = lower.find(pat) {
+            song.replace_range(idx..idx + pat.len(), "");
+            lower = song.to_lowercase();
+        }
+    }
+
+    // 4. 清理残留的空括号与首尾分隔符
+    song = song
+        .replace("[]", "")
+        .replace("()", "")
+        .replace("【】", "")
+        .replace("（）", "")
+        .trim_matches(|c: char| c == '-' || c == '|' || c == '_' || c == '/' || c.is_whitespace())
+        .to_string();
+
+    // 5. 判定并清理歌手
     let clean_artist = {
-        let a = artist_name.trim().to_lowercase();
-        // 占位歌手（edge/chrome/potplayer/bilibili）与平台名（如"网易云音乐"）都视为无歌手：
-        // 平台名作为歌手会污染搜索词（如搜"歌名 网易云音乐"），歌手交给搜索结果的真实字段兜底
+        let a = raw_artist.trim().to_lowercase();
         let is_placeholder = a.is_empty()
             || a == "edge"
             || a == "chrome"
@@ -557,18 +593,114 @@ async fn search_song_meta(
                 "网易云", "云音乐", "qq音乐", "qqmusic", "酷狗", "kugou", "酷我", "kuwo",
                 "虾米", "咪咕", "汽水音乐", "5sing", "spotify", "apple music", "itunes",
                 "youtube music", "soundcloud", "bandcamp", "tidal", "deezer", "pandora",
-                "amazon music", "音乐", "music",
+                "amazon music", "音乐", "music", "zing", "nhaccuatui",
             ]
             .iter()
             .any(|p| a.contains(*p));
         if is_placeholder {
-            String::new()
+            inferred_artist
         } else {
-            artist_name.trim().to_string()
+            raw_artist.trim().to_string()
         }
     };
 
-    let query = format!("{} {}", clean_song, clean_artist);
+    (song, clean_artist)
+}
+
+/// 从 LRCLIB 引擎搜索歌词 (支持精确 get 与模糊 search，对越南语/国际歌曲支持极佳)
+async fn search_lrclib(
+    client: &reqwest::Client,
+    clean_song: &str,
+    clean_artist: &str,
+    duration_ms: i64,
+) -> Option<(String, String, String)> {
+    let duration_sec = duration_ms / 1000;
+
+    // 1. 如果有时长，优先尝试精确匹配
+    if duration_sec > 0 {
+        let lrclib_url = format!(
+            "https://lrclib.net/api/get?track_name={}&artist_name={}&duration={}",
+            urlencoding::encode(clean_song),
+            urlencoding::encode(clean_artist),
+            duration_sec
+        );
+
+        if let Ok(resp) = client.get(&lrclib_url).send().await {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                let title = json.pointer("/trackName").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let artist = json.pointer("/artistName").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let synced = json.pointer("/syncedLyrics").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let plain = json.pointer("/plainLyrics").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let lrc = if !synced.is_empty() { synced } else { plain };
+                if !lrc.is_empty() {
+                    return Some((title, artist, lrc));
+                }
+            }
+        }
+    }
+
+    // 2. 使用关键词搜索 (Search Query) 解决 YouTube/本地时长与原曲存在微小偏差的问题
+    let search_query = if !clean_artist.is_empty() {
+        format!("{} {}", clean_song, clean_artist)
+    } else {
+        clean_song.to_string()
+    };
+
+    let lrclib_search_url = format!(
+        "https://lrclib.net/api/search?q={}",
+        urlencoding::encode(&search_query)
+    );
+
+    if let Ok(resp) = client.get(&lrclib_search_url).send().await {
+        if let Ok(json) = resp.json::<serde_json::Value>().await {
+            if let Some(items) = json.as_array() {
+                for item in items {
+                    let title = item.pointer("/trackName").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let artist = item.pointer("/artistName").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let synced = item.pointer("/syncedLyrics").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let plain = item.pointer("/plainLyrics").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let lrc = if !synced.is_empty() { synced } else { plain };
+                    if !lrc.is_empty() {
+                        return Some((title, artist, lrc));
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+// 统一搜索函数：支持 越南语/国际歌曲 (LRCLIB 优先) 与 华语歌曲 (QQ/网易云 优先)
+async fn search_song_meta(
+    song_name: &str,
+    artist_name: &str,
+    duration_ms: i64,
+) -> Option<(String, String, String)> {
+    let client = get_http_client();
+    let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
+    let (clean_song, clean_artist) = clean_song_and_artist(song_name, artist_name);
+    if clean_song.is_empty() {
+        return None;
+    }
+
+    // 判断是否包含越南语特有字符或拉丁文字（优先走 LRCLIB 国际/越南语歌词库）
+    let is_vietnamese_or_latin = clean_song.chars().any(|c| {
+        c.is_ascii_alphabetic() || ('\u{00C0}'..='\u{1EF9}').contains(&c)
+    });
+
+    if is_vietnamese_or_latin {
+        if let Some(res) = search_lrclib(&client, &clean_song, &clean_artist, duration_ms).await {
+            return Some(res);
+        }
+    }
+
+    let query = if !clean_artist.is_empty() {
+        format!("{} {}", clean_song, clean_artist)
+    } else {
+        clean_song.clone()
+    };
     let query_name_lower = clean_song.to_lowercase();
     let query_artist_lower = clean_artist.to_lowercase();
 
@@ -796,42 +928,9 @@ async fn search_song_meta(
         }
     }
 
-    // 引擎 3：LRCLIB（精确匹配，校验度高）
-    let duration_sec = duration_ms / 1000;
-    if duration_sec > 0 {
-        let lrclib_url = format!(
-            "https://lrclib.net/api/get?track_name={}&artist_name={}&duration={}",
-            urlencoding::encode(&clean_song),
-            urlencoding::encode(&clean_artist),
-            duration_sec
-        );
-
-        if let Ok(resp) = client.get(&lrclib_url).send().await {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                let title = json
-                    .pointer("/trackName")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let artist = json
-                    .pointer("/artistName")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let lrc = json
-                    .pointer("/syncedLyrics")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                // 最后一个引擎：直接返回。标题/歌手优先用前面引擎搜索到的（更准），
-                // 否则用 LRCLIB 的；歌词用第一个拿到的。
-                let final_lrc = saved_lrc.unwrap_or(lrc);
-                if !saved_title.is_empty() {
-                    return Some((saved_title, saved_artist, final_lrc));
-                }
-                return Some((title, artist, final_lrc));
-            }
-        }
+    // 引擎 3：LRCLIB 兜底查询
+    if let Some(res) = search_lrclib(&client, &clean_song, &clean_artist, duration_ms).await {
+        return Some(res);
     }
 
     // 兜底：用搜索结果的标题/歌手 + 第一个拿到的歌词
