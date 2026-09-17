@@ -56,6 +56,13 @@
                         </div>
                     </div>
                     <div class="form-item">
+                        <label class="label" for="lyric-alignment">{{ t('lyricAlignment') }}</label>
+                        <select id="lyric-alignment" v-model="lyricAlignment" class="lyric-alignment-select">
+                            <option value="left">{{ t('lyricAlignLeft') }}</option>
+                            <option value="center">{{ t('lyricAlignCenter') }}</option>
+                        </select>
+                    </div>
+                    <div class="form-item">
                         <span class="label">{{ t('edgeShape') }}</span>
                         <div class="shape-toggle">
                             <button :class="{ active: borderRadius === 100 }" @click="borderRadius = 100"
@@ -327,6 +334,7 @@ const springStyle = ref<'stiff' | 'bouncy'>((localStorage.getItem('nsd_spring_st
 
 // 替换掉坐标偏移，改为窗口交互特性
 const lyricDelay = ref(Number(localStorage.getItem('nsd_lyric_delay')) || 0);
+const lyricAlignment = ref(localStorage.getItem('nsd_lyric_alignment') === 'center' ? 'center' : 'left');
 
 // ---- 数值直改：点击数值框可直接输入，失焦/回车后自动夹取上下限 ----
 const editingKey = ref<string | null>(null);
@@ -421,7 +429,7 @@ const toggleTaskbar = async () => {
 };
 
 // 统一监听更新逻辑入口
-watch([baseWidth, baseHeight, musicBaseWidth, musicExpandedWidth, msgExpandedWidth, borderRadius, islandTheme, dualAiGlowBoostEnabled, dynamicIslandTopAttached, springStyle, appScale, lyricDelay], async () => {
+watch([baseWidth, baseHeight, musicBaseWidth, musicExpandedWidth, msgExpandedWidth, borderRadius, islandTheme, dualAiGlowBoostEnabled, dynamicIslandTopAttached, springStyle, appScale, lyricDelay, lyricAlignment], async () => {
     // 1. 写入本地缓存
     localStorage.setItem('nsd_base_width', String(baseWidth.value));
     localStorage.setItem('nsd_base_height', String(baseHeight.value));
@@ -435,6 +443,7 @@ watch([baseWidth, baseHeight, musicBaseWidth, musicExpandedWidth, msgExpandedWid
     localStorage.setItem('nsd_spring_style', springStyle.value);
     localStorage.setItem('nsd_app_scale', String(appScale.value));
     localStorage.setItem('nsd_lyric_delay', String(lyricDelay.value));
+    localStorage.setItem('nsd_lyric_alignment', lyricAlignment.value);
 
     // 发送颜色专属广播
     await emit('control-island-theme', { theme: islandTheme.value });
@@ -452,6 +461,7 @@ watch([baseWidth, baseHeight, musicBaseWidth, musicExpandedWidth, msgExpandedWid
         springStyle: springStyle.value,
         appScale: appScale.value,
         lyricDelay: lyricDelay.value,
+        lyricAlignment: lyricAlignment.value,
     });
 }, { deep: true });
 </script>
@@ -660,6 +670,16 @@ input:checked+.slider:before {
     color: var(--item-desc-color);
     width: 30px;
     text-align: center;
+}
+
+.lyric-alignment-select {
+    padding: 5px 8px;
+    border: 1px solid var(--control-border);
+    border-radius: 6px;
+    background: var(--bg-body);
+    color: var(--item-title-color, inherit);
+    font: inherit;
+    cursor: pointer;
 }
 
 .stepper-control {

@@ -370,7 +370,8 @@
                                         :style="coverUrl ? { backgroundImage: `url(${coverUrl})`, backgroundSize: 'cover' } : {}">
                                     </div>
                                 </div>
-                                <div class="music-info-mask-box" ref="maskBoxRef">
+                                <div class="music-info-mask-box" ref="maskBoxRef"
+                                    :class="{ 'lyrics-centered': nsdLyricAlignment === 'center' && !isVideoPlayer && (currentLyricLine || plainLyricText) }">
                                     <div class="music-info-text single-line" :class="{ 'fade-out': isMusicExpanded }"
                                         style="position: relative; width: 100%; height: 100%;">
                                         <transition name="lyric-fade" @after-enter="calculateScroll">
@@ -1284,6 +1285,7 @@ const nsdMsgExpandedWidth = ref(Number(localStorage.getItem('nsd_msg_expanded_wi
 const nsdBorderRadius = ref(Number(localStorage.getItem('nsd_border_radius')) || 100);
 const nsdSpringStyle = ref(localStorage.getItem('nsd_spring_style') || 'bouncy');
 const nsdLyricDelay = ref(Number(localStorage.getItem('nsd_lyric_delay')) || 0);
+const nsdLyricAlignment = ref(localStorage.getItem('nsd_lyric_alignment') === 'center' ? 'center' : 'left');
 
 // WS 歌词专属额外延迟（毫秒），调谐时只改这里
 const WS_LYRIC_DELAY_MS = 500;
@@ -3909,6 +3911,7 @@ onMounted(async () => {
         dynamicIslandTopAttached.value = data.dynamicIslandTopAttached === true;
         nsdSpringStyle.value = data.springStyle;
         nsdLyricDelay.value = Number(data.lyricDelay) || 0;
+        nsdLyricAlignment.value = data.lyricAlignment === 'center' ? 'center' : 'left';
 
         // 检测重绘逻辑
         const oldScale = appScale.value;
@@ -5732,6 +5735,21 @@ onUnmounted(() => {
     letter-spacing: -0.012em;
     line-height: 1.35;
     padding: 2px 0;
+}
+
+.lyrics-centered .lyric-render-text {
+    display: flex;
+    justify-content: safe center;
+    right: 12px;
+}
+
+.lyrics-centered .song-title {
+    display: flex;
+    justify-content: safe center;
+}
+
+.lyrics-centered .song-title > span {
+    flex-shrink: 0;
 }
 
 .lyric-fade-enter-active {
