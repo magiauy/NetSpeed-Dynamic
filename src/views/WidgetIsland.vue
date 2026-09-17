@@ -375,8 +375,8 @@
                                     <div class="music-info-text single-line" :class="{ 'fade-out': isMusicExpanded }"
                                         style="position: relative; width: 100%; height: 100%;">
                                         <transition name="lyric-fade" @after-enter="calculateScroll">
-                                            <!-- 1. Word-level Sync Mode -->
-                                            <span v-if="currentLyricLine?.words?.length && !isVideoPlayer"
+                                            <!-- 1. Word-level Sync Mode (controlled by ENABLE_WORD_BY_WORD_LYRICS) -->
+                                            <span v-if="ENABLE_WORD_BY_WORD_LYRICS && currentLyricLine?.words?.length && !isVideoPlayer"
                                                 class="lyric-render-text word-sync-mode"
                                                 :key="'w_' + currentLyricLine.startMs">
                                                 <span class="scroll-inner word-scroll-inner" ref="textInnerRef"
@@ -424,7 +424,7 @@
                                     </div>
                                     <div class="music-info-text double-line" :class="{ 'fade-in': isMusicExpanded }">
                                         <div class="song-title" ref="expandedTitleBoxRef">
-                                            <span v-if="currentLyricLine?.words?.length && !isVideoPlayer"
+                                            <span v-if="ENABLE_WORD_BY_WORD_LYRICS && currentLyricLine?.words?.length && !isVideoPlayer"
                                                 class="expanded-word-sync">
                                                 <span v-for="(word, wIdx) in currentLyricLine.words"
                                                     :key="wIdx"
@@ -624,6 +624,7 @@ import { listen, emit } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { t, currentLanguage, type AppLanguage } from '../i18n';
 import { useLyrics } from '../features/lyrics/useLyrics';
+import { ENABLE_WORD_BY_WORD_LYRICS } from '../features/lyrics/config';
 import { lyricScrollOffset, wordScrollOffset } from '../features/lyrics/scroll';
 import DuoBoostGlow from '../components/DuoBoostGlow.vue';
 
@@ -3066,7 +3067,7 @@ const timedLyricScroll = computed(() => {
         ? Math.max(...line.words.map(word => word.endMs)) : line.endMs;
     const duration = Math.max(1, Math.min(line.endMs, nextStart, sungEnd) - line.startMs);
     const elapsed = lyricFrame.value.lineProgress * Math.max(1, line.endMs - line.startMs);
-    if (line.words?.length && layout.words.length === line.words.length) {
+    if (ENABLE_WORD_BY_WORD_LYRICS && line.words?.length && layout.words.length === line.words.length) {
         return wordScrollOffset(layout.textWidth, layout.viewportWidth, line.startMs + elapsed,
             line.startMs, line.startMs + duration,
             line.words.map((word, index) => ({ startMs: word.startMs, left: layout.words[index].left })));
@@ -3137,8 +3138,9 @@ const calculateScroll = () => {
     const safeWidth = Math.max(0, containerWidth - 12);
     lyricLayout.value = {
         textWidth, viewportWidth: safeWidth,
-        words: Array.from(textInnerRef.value.querySelectorAll<HTMLElement>('.lyric-word'))
-            .map(word => ({ left: word.offsetLeft })),
+        words: ENABLE_WORD_BY_WORD_LYRICS
+            ? Array.from(textInnerRef.value.querySelectorAll<HTMLElement>('.lyric-word')).map(word => ({ left: word.offsetLeft }))
+            : [],
     };
 
     // 只要文字超出容器宽度就必须开始滚动
